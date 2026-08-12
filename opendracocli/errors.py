@@ -28,6 +28,12 @@ ERR_AUTH_FAILED = "draco.auth.failed"             # 身份验证失败
 ERR_SANDBOX_VIOLATION = "draco.sandbox.violation"  # 沙箱路径违规
 ERR_AUTH_NOT_CONFIGURED = "draco.auth.not_configured"  # 未配置密码
 
+# P3 AI 智能层
+ERR_AI_UNAVAILABLE = "draco.ai.unavailable"        # AI 未配置/不可用
+ERR_AI_TIMEOUT = "draco.ai.timeout"                # AI 调用超时
+ERR_AI_PARSE_FAILED = "draco.ai.parse_failed"      # AI 输出解析失败
+ERR_AI_RISK_DENIED = "draco.ai.risk_denied"        # AI 风控拒绝
+
 
 # 可翻译消息表（key = 错误码, value = 默认中文消息模板）
 # 注意：占位符名不能与 make_error 的 keyword-only 参数 detail 冲突。
@@ -46,6 +52,10 @@ _DEFAULT_MESSAGES: Dict[str, str] = {
     ERR_AUTH_FAILED: "身份验证失败: {reason}",
     ERR_SANDBOX_VIOLATION: "沙箱拦截: 写入路径 {path} 不在白名单内",
     ERR_AUTH_NOT_CONFIGURED: "未配置密码，请先运行 opendracocli --setup-auth",
+    ERR_AI_UNAVAILABLE: "AI 不可用: {reason}",
+    ERR_AI_TIMEOUT: "AI 调用超时（{timeout}s）",
+    ERR_AI_PARSE_FAILED: "AI 输出解析失败: {reason}",
+    ERR_AI_RISK_DENIED: "AI 风控拒绝: {reason}",
 }
 
 # 可重试标记表
@@ -64,6 +74,10 @@ _RETRYABLE: Dict[str, bool] = {
     ERR_AUTH_FAILED: False,
     ERR_SANDBOX_VIOLATION: False,
     ERR_AUTH_NOT_CONFIGURED: False,
+    ERR_AI_UNAVAILABLE: False,
+    ERR_AI_TIMEOUT: True,
+    ERR_AI_PARSE_FAILED: False,
+    ERR_AI_RISK_DENIED: False,
 }
 
 

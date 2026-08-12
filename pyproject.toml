@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "opendracocli"
 version = "0.1.0"
-description = "OpenDracoCLI — AI 时代的智能终端 (P1: 跨平台 Shell 内核)"
+description = "OpenDracoCLI — AI 时代的智能终端 (P3: AI 智能层)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -42,6 +42,8 @@ include = ["opendracocli*"]
 
 [tool.setuptools.package-data]
 "opendracocli.mappings" = ["*.json"]
+"opendracocli.security" = ["*.json"]
+"opendracocli.ai.roles" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
