@@ -21,6 +21,13 @@ ERR_EXEC_FAILED = "draco.exec.failed"
 ERR_EXEC_CANCELLED = "draco.exec.cancelled"
 ERR_HISTORY_DB_ERROR = "draco.history.db_error"
 
+# P2 安全与风控
+ERR_RISK_BLOCKED = "draco.risk.blocked"           # 风控拦截（通用）
+ERR_RISK_DENIED = "draco.risk.denied"             # 用户拒绝 yes 确认
+ERR_AUTH_FAILED = "draco.auth.failed"             # 身份验证失败
+ERR_SANDBOX_VIOLATION = "draco.sandbox.violation"  # 沙箱路径违规
+ERR_AUTH_NOT_CONFIGURED = "draco.auth.not_configured"  # 未配置密码
+
 
 # 可翻译消息表（key = 错误码, value = 默认中文消息模板）
 # 注意：占位符名不能与 make_error 的 keyword-only 参数 detail 冲突。
@@ -34,6 +41,11 @@ _DEFAULT_MESSAGES: Dict[str, str] = {
     ERR_EXEC_FAILED: "执行失败（退出码 {exit_code}）: {command}",
     ERR_EXEC_CANCELLED: "用户取消: {command}",
     ERR_HISTORY_DB_ERROR: "历史数据库错误: {reason}",
+    ERR_RISK_BLOCKED: "风控拦截: {reason}",
+    ERR_RISK_DENIED: "用户拒绝执行: {command}",
+    ERR_AUTH_FAILED: "身份验证失败: {reason}",
+    ERR_SANDBOX_VIOLATION: "沙箱拦截: 写入路径 {path} 不在白名单内",
+    ERR_AUTH_NOT_CONFIGURED: "未配置密码，请先运行 opendracocli --setup-auth",
 }
 
 # 可重试标记表
@@ -47,6 +59,11 @@ _RETRYABLE: Dict[str, bool] = {
     ERR_EXEC_FAILED: False,  # 视情况，默认不可重试
     ERR_EXEC_CANCELLED: False,
     ERR_HISTORY_DB_ERROR: True,
+    ERR_RISK_BLOCKED: False,
+    ERR_RISK_DENIED: False,
+    ERR_AUTH_FAILED: False,
+    ERR_SANDBOX_VIOLATION: False,
+    ERR_AUTH_NOT_CONFIGURED: False,
 }
 
 

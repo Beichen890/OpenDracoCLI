@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, fields
+import sys
+from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, List
 
 
 def _expand(p: str) -> str:
@@ -35,6 +36,15 @@ class DracoConfig:
     windows_shell: str = "cmd"
     unix_shell: str = "bash"
 
+    # P2 安全与风控
+    security_rules_file: str = "~/.opendracocli/rules.json"  # 用户规则覆盖（与包内默认合并）
+    auth_hash_file: str = "~/.opendracocli/auth.hash"
+    sandbox_writable_paths: list[str] = field(
+        default_factory=lambda: ["~", "/tmp"]
+    )
+    require_auth_for: str = "critical"  # critical / danger / off
+    pbkdf2_iterations: int = 100000
+
     def __post_init__(self) -> None:
         # 环境变量覆盖
         for f in fields(self):
@@ -52,6 +62,10 @@ class DracoConfig:
             setattr(self, name, int(raw))
         elif isinstance(cur, float) or type_hint is float:
             setattr(self, name, float(raw))
+        elif isinstance(cur, list) or type_hint is list:
+            # 列表字段：用 ; 或 : 分隔（Windows 优先 ;，Unix 优先 :）
+            sep = ";" if sys.platform.startswith("win") else ":"
+            setattr(self, name, [s.strip() for s in raw.split(sep) if s.strip()])
         else:
             setattr(self, name, raw)
 
@@ -71,6 +85,24 @@ class DracoConfig:
             return p
         # 相对包目录（mappings_dir 默认 "mappings"，即包内子目录）
         return Path(__file__).parent / p
+
+    @property
+    def security_rules_file_resolved(self) -> Path:
+        return Path(_expand(self.security_rules_file))
+
+    @property
+    def auth_hash_file_resolved(self) -> Path:
+        return Path(_expand(self.auth_hash_file))
+
+    @property
+    def sandbox_writable_paths_resolved(self) -> List[Path]:
+        """可写路径白名单（展开 ~ 和环境变量）"""
+        return [Path(_expand(p)) for p in self.sandbox_writable_paths]
+
+    @property
+    def builtin_rules_path(self) -> Path:
+        """包内置默认规则表"""
+        return Path(__file__).parent / "security" / "rules.json"
 
     @property
     def current_platform(self) -> str:

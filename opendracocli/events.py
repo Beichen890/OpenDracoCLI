@@ -22,6 +22,11 @@ EVT_COMMAND_FAILED = "CommandFailed"
 EVT_SESSION_STARTED = "SessionStarted"
 EVT_SESSION_ENDED = "SessionEnded"
 
+# P2 安全与风控
+EVT_RISK_BLOCKED = "RiskBlocked"          # 高危命令被拦截
+EVT_AUTH_REQUIRED = "AuthRequired"        # 触发身份验证
+EVT_SANDBOX_VIOLATION = "SandboxViolation"  # 沙箱拦截
+
 
 @dataclass
 class Event:

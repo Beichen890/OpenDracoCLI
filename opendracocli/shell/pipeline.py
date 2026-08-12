@@ -58,6 +58,7 @@ class ShellPipeline:
         hook_registry: Optional[HookRegistry] = None,
         executor: Optional[SubprocessExecutor] = None,
         platform_mapper: Optional[PlatformMapper] = None,
+        sandbox_executor: Optional[Any] = None,
     ) -> None:
         self._config = config or get_global_config()
         self._aliases = alias_manager
@@ -68,6 +69,12 @@ class ShellPipeline:
         self._expander = AliasExpander(
             manager=self._aliases, config=self._config
         )
+        # P2: 沙箱执行器（可选，由 CLI 在启用风控时注入）
+        self._sandbox_executor = sandbox_executor
+
+    def set_sandbox_executor(self, sx: Any) -> None:
+        """注入沙箱执行器（P2 风控启用时调用）"""
+        self._sandbox_executor = sx
 
     def set_alias_manager(self, m: AliasManager) -> None:
         self._aliases = m
@@ -165,9 +172,19 @@ class ShellPipeline:
         # 钩子可能改写了 ctx.ir，重新序列化
         result.canonical_ir = ctx.ir.to_json()
 
+        # P2: 根据风控钩子标记选择 executor
+        use_sandbox = ctx.metadata.get("use_sandbox", False)
+        risk_level = ctx.metadata.get("risk_level", "safe")
+        result.is_high_risk = risk_level in ("danger", "critical")
+
+        executor = self._executor
+        if use_sandbox and self._sandbox_executor is not None:
+            executor = self._sandbox_executor
+            log.info("using sandbox executor for risk_level=%s", risk_level)
+
         # --- 6. execute ---
         try:
-            exec_result: ExecResult = await self._executor.execute(
+            exec_result: ExecResult = await executor.execute(
                 ctx.ir, cwd=effective_cwd, timeout=timeout
             )
         except DracoError as e:

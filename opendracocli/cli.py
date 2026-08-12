@@ -3,7 +3,8 @@
 特性:
   - prompt_toolkit 提供输入行：历史回溯（上下方向键）、Tab 补全、多行
   - rich 渲染输出（彩色 stdout/stderr、错误面板）
-  - 内置 slash 命令：/alias /aliases /history /help /quit
+  - 内置 slash 命令：/alias /aliases /history /risk /help /quit
+  - P2 风控：RiskAssessmentHook + SandboxExecutor 自动接线
   - 会话 ID（启动生成）
 """
 
@@ -13,6 +14,7 @@ import asyncio
 import os
 import sys
 import uuid
+from pathlib import Path
 from typing import Optional
 
 from .aliases.manager import AliasManager, get_global_manager
@@ -20,7 +22,13 @@ from .config import DracoConfig, get_global_config
 from .errors import DracoError
 from .events import EVT_SESSION_ENDED, EVT_SESSION_STARTED, Event, get_global_bus
 from .history.store import HistoryStore, get_global_store
+from .hooks.risk_hook import RiskAssessmentHook
+from .hooks.registry import get_global_registry
 from .logger import get_logger
+from .security.authenticator import Authenticator
+from .security.confirmer import Confirmer
+from .security.risk_assessor import RiskAssessor, get_global_assessor
+from .security.sandbox import SandboxExecutor
 from .shell.pipeline import ShellPipeline
 
 log = get_logger("cli")
@@ -48,11 +56,37 @@ class OpenDracoCLI:
         self._config = config or get_global_config()
         self._aliases = alias_manager or get_global_manager()
         self._history = history_store or get_global_store()
+
+        # P2: 接线风控组件
+        self._assessor = get_global_assessor(self._config)
+        self._confirmer = Confirmer()
+        self._authenticator = Authenticator(
+            hash_path=self._config.auth_hash_file_resolved,
+            iterations=self._config.pbkdf2_iterations,
+        )
+        self._sandbox = SandboxExecutor(
+            inner=None,  # 占位，pipeline 创建后再绑定
+            writable_paths=self._config.sandbox_writable_paths_resolved,
+        )
+
         self._pipeline = ShellPipeline(
             config=self._config,
             alias_manager=self._aliases,
             history_store=self._history,
         )
+        # 绑定沙箱的 inner executor 为 pipeline 的原生 executor
+        self._sandbox._inner = self._pipeline._executor
+        self._pipeline.set_sandbox_executor(self._sandbox)
+
+        # 注册 RiskAssessmentHook（priority=10，最先执行）
+        self._risk_hook = RiskAssessmentHook(
+            assessor=self._assessor,
+            confirmer=self._confirmer,
+            authenticator=self._authenticator,
+            config=self._config,
+        )
+        get_global_registry().register_pre(self._risk_hook)
+
         self._session_id = str(uuid.uuid4())
         self._running = False
 
@@ -205,6 +239,9 @@ class OpenDracoCLI:
         if cmd == "/history":
             self._show_history(arg)
             return None
+        if cmd == "/risk":
+            self._handle_risk_cmd(arg)
+            return None
         self._render_error(f"未知命令: {cmd}（/help 查看可用命令）")
         return None
 
@@ -215,6 +252,8 @@ class OpenDracoCLI:
         print("  /alias -d <name>            删除别名")
         print("  /aliases                    列出所有别名")
         print("  /history [N]                显示最近 N 条历史（默认 20）")
+        print("  /risk                       显示当前风险规则表")
+        print("  /risk test <command>        模拟评估命令风险（不执行）")
         print("  /help                       显示此帮助")
         print("  /quit                       退出")
 
@@ -271,6 +310,120 @@ class OpenDracoCLI:
             status = "OK" if r.exit_code == 0 else (f"×{r.exit_code}" if r.exit_code is not None else "?")
             print(f"  [{status}] {r.raw_input}")
 
+    def _handle_risk_cmd(self, arg: str) -> None:
+        """处理 /risk 子命令
+
+        /risk                  — 显示当前规则表
+        /risk test <command>   — 模拟评估某命令的风险等级（不执行）
+        """
+        arg = arg.strip()
+        if not arg:
+            self._show_risk_rules()
+            return
+        parts = arg.split(maxsplit=1)
+        sub = parts[0].lower()
+        if sub == "test":
+            if len(parts) < 2:
+                self._render_error("用法: /risk test <command>")
+                return
+            self._preview_risk(parts[1])
+            return
+        self._render_error(f"未知子命令: {sub}（可用: test）")
+
+    def _show_risk_rules(self) -> None:
+        """显示当前生效的风险规则表"""
+        from .security.risk_assessor import RiskLevel
+
+        level_order = [RiskLevel.CRITICAL, RiskLevel.DANGER, RiskLevel.CAUTION]
+        level_label = {
+            RiskLevel.CRITICAL: "🚨 CRITICAL",
+            RiskLevel.DANGER: "🔴 DANGER",
+            RiskLevel.CAUTION: "⚠️  CAUTION",
+        }
+        if getattr(self, "_rich", False):
+            from rich.console import Console
+            from rich.table import Table
+
+            console = Console()
+            table = Table(title="风险规则表", border_style="cyan")
+            table.add_column("等级", style="bold")
+            table.add_column("命令")
+            table.add_column("args_contain")
+            table.add_column("exact_args")
+            table.add_column("说明")
+            for level in level_order:
+                for pat in self._assessor._patterns_by_level[level]:
+                    table.add_row(
+                        level_label[level],
+                        pat.cmd,
+                        ",".join(pat.args_contain) or "-",
+                        ",".join(pat.exact_args) or "-",
+                        pat.desc,
+                    )
+            console.print(table)
+        else:
+            print("风险规则表:")
+            for level in level_order:
+                pats = self._assessor._patterns_by_level[level]
+                if not pats:
+                    continue
+                print(f"  [{level_label[level]}]")
+                for pat in pats:
+                    ac = ",".join(pat.args_contain) or "-"
+                    ea = ",".join(pat.exact_args) or "-"
+                    print(f"    {pat.cmd}  contain=[{ac}] exact=[{ea}]  {pat.desc}")
+
+    def _preview_risk(self, command: str) -> None:
+        """模拟评估某命令的风险等级（不执行）"""
+        from .shell.parser import parse
+        from .shell.normalizer import normalize
+
+        try:
+            ir = parse(command)
+            normalize(ir)
+            # 别名展开 + 平台映射（与真实管线一致，确保评估准确）
+            ir, _ = self._pipeline._expander.expand(ir)
+            self._pipeline._mapper.map(ir)
+        except DracoError as e:
+            self._render_draco_error(e)
+            return
+
+        assessment = self._assessor.assess(ir)
+        level = assessment.level
+        label = {
+            "safe": "✅ SAFE",
+            "caution": "⚠️  CAUTION",
+            "danger": "🔴 DANGER",
+            "critical": "🚨 CRITICAL",
+        }.get(level.value, level.value)
+
+        if getattr(self, "_rich", False):
+            from rich.console import Console
+            from rich.panel import Panel
+
+            console = Console()
+            color = {
+                "safe": "green",
+                "caution": "yellow",
+                "danger": "red",
+                "critical": "bold red",
+            }.get(level.value, "white")
+            body = f"[{color}]{label}[/]\n命令: {command}\n"
+            if assessment.reason:
+                body += f"原因: {assessment.reason}\n"
+            if assessment.matched_rules:
+                body += "命中规则:\n"
+                for m in assessment.matched_rules:
+                    body += f"  - [{m.level.value}] {m.cmd}: {m.desc}\n"
+            console.print(Panel(body.strip(), title="风险预览", border_style=color))
+        else:
+            print(f"风险预览: {label}")
+            print(f"  命令: {command}")
+            if assessment.reason:
+                print(f"  原因: {assessment.reason}")
+            for m in assessment.matched_rules:
+                print(f"  命中: [{m.level.value}] {m.cmd}: {m.desc}")
+
     def _render_error(self, msg: str) -> None:
         if getattr(self, "_rich", False):
             from rich.console import Console
@@ -303,12 +456,51 @@ class OpenDracoCLI:
 
 
 def main() -> None:
-    """入口函数（pyproject scripts 指向）"""
+    """入口函数（pyproject scripts 指向）
+
+    支持参数:
+      --setup-auth   设置/重置身份验证密码（用于 critical 级操作）
+    """
+    args = sys.argv[1:]
+    if "--setup-auth" in args:
+        _setup_auth_interactive()
+        return
     app = OpenDracoCLI()
     try:
         asyncio.run(app.run())
     except KeyboardInterrupt:
         pass
+
+
+def _setup_auth_interactive() -> None:
+    """交互式设置身份验证密码"""
+    cfg = get_global_config()
+    auth = Authenticator(
+        hash_path=cfg.auth_hash_file_resolved,
+        iterations=cfg.pbkdf2_iterations,
+    )
+    print("OpenDracoCLI — 设置身份验证密码")
+    print(f"  哈希文件: {cfg.auth_hash_file_resolved}")
+    print(f"  算法: PBKDF2-HMAC-SHA256 ({cfg.pbkdf2_iterations} 轮)")
+    if auth.is_configured():
+        print("  ⚠️  已存在密码，将覆盖。")
+    print()
+
+    try:
+        pw1 = input("请输入新密码: ")
+        if not pw1:
+            print("密码不能为空，已取消。")
+            return
+        pw2 = input("请再次输入以确认: ")
+    except (EOFError, KeyboardInterrupt):
+        print("\n已取消。")
+        return
+
+    if pw1 != pw2:
+        print("两次输入不一致，已取消。")
+        return
+    auth.set_password(pw1)
+    print("✅ 密码已设置。critical 级操作将通过此密码验证身份。")
 
 
 if __name__ == "__main__":
