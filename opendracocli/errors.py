@@ -1,0 +1,112 @@
+"""OpenDracoCLI 集中化错误目录
+
+稳定错误码字符串契约（不随版本变更）。P3 AI 据此决定如何帮用户。
+参考 DracoDownloader errors.py 的哲学。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
+
+
+# === 稳定错误码常量（契约，不会随版本变更） ===
+ERR_SHELL_PARSE_ERROR = "draco.shell.parse_error"
+ERR_SHELL_UNSUPPORTED_SYNTAX = "draco.shell.unsupported_syntax"
+ERR_SHELL_COMMAND_NOT_FOUND = "draco.shell.command_not_found"
+ERR_ALIAS_UNDEFINED = "draco.alias.undefined"
+ERR_ALIAS_RECURSIVE = "draco.alias.recursive"
+ERR_EXEC_TIMEOUT = "draco.exec.timeout"
+ERR_EXEC_FAILED = "draco.exec.failed"
+ERR_EXEC_CANCELLED = "draco.exec.cancelled"
+ERR_HISTORY_DB_ERROR = "draco.history.db_error"
+
+
+# 可翻译消息表（key = 错误码, value = 默认中文消息模板）
+# 注意：占位符名不能与 make_error 的 keyword-only 参数 detail 冲突。
+_DEFAULT_MESSAGES: Dict[str, str] = {
+    ERR_SHELL_PARSE_ERROR: "输入解析失败: {reason}",
+    ERR_SHELL_UNSUPPORTED_SYNTAX: "不支持的 shell 语法: {reason}",
+    ERR_SHELL_COMMAND_NOT_FOUND: "命令不存在: {command}",
+    ERR_ALIAS_UNDEFINED: "未定义的别名: {alias}",
+    ERR_ALIAS_RECURSIVE: "别名递归超过 {depth} 层: {alias}",
+    ERR_EXEC_TIMEOUT: "执行超时（{timeout}s）: {command}",
+    ERR_EXEC_FAILED: "执行失败（退出码 {exit_code}）: {command}",
+    ERR_EXEC_CANCELLED: "用户取消: {command}",
+    ERR_HISTORY_DB_ERROR: "历史数据库错误: {reason}",
+}
+
+# 可重试标记表
+_RETRYABLE: Dict[str, bool] = {
+    ERR_SHELL_PARSE_ERROR: False,
+    ERR_SHELL_UNSUPPORTED_SYNTAX: False,
+    ERR_SHELL_COMMAND_NOT_FOUND: False,
+    ERR_ALIAS_UNDEFINED: False,
+    ERR_ALIAS_RECURSIVE: False,
+    ERR_EXEC_TIMEOUT: True,
+    ERR_EXEC_FAILED: False,  # 视情况，默认不可重试
+    ERR_EXEC_CANCELLED: False,
+    ERR_HISTORY_DB_ERROR: True,
+}
+
+
+@dataclass
+class DracoError(Exception):
+    """OpenDracoCLI 统一异常
+
+    Attributes:
+        code: 稳定错误码
+        message: 默认中文消息（已格式化）
+        detail: 结构化上下文（供 P3 AI 消费）
+        retryable: 是否可重试
+    """
+
+    code: str
+    message: str = ""
+    detail: Dict[str, Any] = field(default_factory=dict)
+    retryable: bool = False
+
+    def __post_init__(self) -> None:
+        # 兼容 Exception 的消息机制
+        super().__init__(self.message or self.code)
+
+    def __str__(self) -> str:
+        return f"[{self.code}] {self.message}"
+
+
+def make_error(
+    code: str,
+    *,
+    detail: Optional[Dict[str, Any]] = None,
+    **fmt_kwargs: Any,
+) -> DracoError:
+    """根据错误码构造 DracoError
+
+    Args:
+        code: 稳定错误码常量
+        detail: 结构化上下文（合并 fmt_kwargs）
+        **fmt_kwargs: 消息模板格式化参数 + detail 补充
+
+    Returns:
+        DracoError 实例
+    """
+    template = _DEFAULT_MESSAGES.get(code, code)
+    try:
+        message = template.format(**fmt_kwargs)
+    except (KeyError, IndexError):
+        message = template
+
+    merged_detail = dict(detail or {})
+    merged_detail.update(fmt_kwargs)
+
+    return DracoError(
+        code=code,
+        message=message,
+        detail=merged_detail,
+        retryable=_RETRYABLE.get(code, False),
+    )
+
+
+def is_retryable(err: DracoError) -> bool:
+    """判断错误是否可重试"""
+    return err.retryable

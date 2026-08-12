@@ -1,0 +1,16 @@
+{
+  "_comment": "Unix 命令名 → Windows 命令名映射。P1 只映射命令名，参数透传。",
+  "ls": "dir",
+  "cat": "type",
+  "cp": "copy",
+  "mv": "move",
+  "rm": "del",
+  "rmdir": "rd",
+  "mkdir": "md",
+  "pwd": "cd",
+  "echo": "echo",
+  "clear": "cls",
+  "grep": "findstr",
+  "touch": "type nul",
+  "man": "help"
+}

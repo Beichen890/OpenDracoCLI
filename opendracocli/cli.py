@@ -1,0 +1,315 @@
+"""OpenDracoCLI TUI 主循环 — prompt_toolkit 输入 + rich 渲染
+
+特性:
+  - prompt_toolkit 提供输入行：历史回溯（上下方向键）、Tab 补全、多行
+  - rich 渲染输出（彩色 stdout/stderr、错误面板）
+  - 内置 slash 命令：/alias /aliases /history /help /quit
+  - 会话 ID（启动生成）
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+import uuid
+from typing import Optional
+
+from .aliases.manager import AliasManager, get_global_manager
+from .config import DracoConfig, get_global_config
+from .errors import DracoError
+from .events import EVT_SESSION_ENDED, EVT_SESSION_STARTED, Event, get_global_bus
+from .history.store import HistoryStore, get_global_store
+from .logger import get_logger
+from .shell.pipeline import ShellPipeline
+
+log = get_logger("cli")
+
+
+def _get_prompt_text() -> str:
+    """生成提示符（含 cwd）"""
+    cwd = os.getcwd()
+    # 缩短 home 路径
+    home = os.path.expanduser("~")
+    if cwd.startswith(home):
+        cwd = "~" + cwd[len(home):]
+    return f"draco {cwd}> "
+
+
+class OpenDracoCLI:
+    """TUI 主应用"""
+
+    def __init__(
+        self,
+        config: Optional[DracoConfig] = None,
+        alias_manager: Optional[AliasManager] = None,
+        history_store: Optional[HistoryStore] = None,
+    ) -> None:
+        self._config = config or get_global_config()
+        self._aliases = alias_manager or get_global_manager()
+        self._history = history_store or get_global_store()
+        self._pipeline = ShellPipeline(
+            config=self._config,
+            alias_manager=self._aliases,
+            history_store=self._history,
+        )
+        self._session_id = str(uuid.uuid4())
+        self._running = False
+
+    async def run(self) -> None:
+        """启动 TUI 主循环"""
+        self._running = True
+        get_global_bus().publish(
+            Event(
+                type=EVT_SESSION_STARTED,
+                payload={"session_id": self._session_id, "platform": self._config.current_platform},
+            )
+        )
+
+        # rich 可用则用它打印启动横幅
+        try:
+            from rich.console import Console
+            from rich.panel import Panel
+
+            console = Console()
+            console.print(
+                Panel.fit(
+                    "[bold cyan]OpenDracoCLI[/] — AI 时代的智能终端 (P1)\n"
+                    f"平台: {self._config.current_platform}  会话: {self._session_id[:8]}\n"
+                    "输入 [green]/help[/] 查看内置命令，[green]/quit[/] 退出",
+                    border_style="cyan",
+                )
+            )
+            self._rich = True
+        except ImportError:
+            self._rich = False
+            print("OpenDracoCLI (P1) — /help for commands, /quit to exit")
+
+        # 历史 tail 提示
+        try:
+            recent = self._history.recent(limit=3, session_id=None)
+            if recent:
+                print(f"(最近 {len(recent)} 条历史可用方向键回溯)")
+        except Exception:
+            pass
+
+        # prompt_toolkit 历史
+        try:
+            from prompt_toolkit import PromptSession
+            from prompt_toolkit.history import InMemoryHistory
+
+            # 从 SQLite 加载历史到内存（prompt_toolkit 的方向键回溯）
+            pt_history = InMemoryHistory()
+            try:
+                for rec in reversed(self._history.recent(limit=500, session_id=None)):
+                    pt_history.append_string(rec.raw_input)
+            except Exception:
+                pass
+
+            session = PromptSession(history=pt_history)
+            self._pt_session = session
+            self._pt_available = True
+        except ImportError:
+            self._pt_available = False
+            self._pt_session = None
+
+        while self._running:
+            try:
+                if self._pt_available:
+                    text = await session.prompt_async(_get_prompt_text())
+                else:
+                    # 回退到 input()
+                    text = input(_get_prompt_text())
+            except (EOFError, KeyboardInterrupt):
+                # Ctrl+D / Ctrl+C 退出
+                print()
+                break
+
+            text = text.strip()
+            if not text:
+                continue
+
+            # slash 命令
+            if text.startswith("/"):
+                handled = self._handle_slash(text)
+                if handled == "quit":
+                    break
+                continue
+
+            # 执行命令
+            await self._exec_command(text)
+
+        self._running = False
+        get_global_bus().publish(
+            Event(type=EVT_SESSION_ENDED, payload={"session_id": self._session_id})
+        )
+        try:
+            self._history.close()
+        except Exception:
+            pass
+
+    async def _exec_command(self, text: str) -> None:
+        """执行一条命令并渲染输出"""
+        try:
+            result = await self._pipeline.run(
+                text, session_id=self._session_id
+            )
+        except Exception as e:
+            log.exception("pipeline crashed")
+            self._render_error(f"管线异常: {e}")
+            return
+
+        if result.blocked:
+            self._render_block(result)
+            return
+
+        if not result.success and result.error is not None:
+            self._render_draco_error(result.error)
+            return
+
+        # 渲染 stdout/stderr
+        if result.stdout:
+            sys.stdout.write(result.stdout)
+            if not result.stdout.endswith("\n"):
+                sys.stdout.write("\n")
+            sys.stdout.flush()
+        if result.stderr:
+            sys.stderr.write(result.stderr)
+            if not result.stderr.endswith("\n"):
+                sys.stderr.write("\n")
+            sys.stderr.flush()
+
+        # 非零退出码提示
+        if result.exit_code not in (0, None):
+            self._render_error(
+                f"退出码 {result.exit_code}" + (f"（别名 {result.alias_used}）" if result.alias_used else "")
+            )
+
+    def _handle_slash(self, text: str) -> Optional[str]:
+        """处理 / 开头的内置命令，返回 'quit' 或 None"""
+        parts = text.split(maxsplit=1)
+        cmd = parts[0].lower()
+        arg = parts[1] if len(parts) > 1 else ""
+
+        if cmd in ("/quit", "/exit", "/q"):
+            return "quit"
+        if cmd in ("/help", "/h", "/?"):
+            self._print_help()
+            return None
+        if cmd == "/alias":
+            self._handle_alias_cmd(arg)
+            return None
+        if cmd == "/aliases":
+            self._list_aliases()
+            return None
+        if cmd == "/history":
+            self._show_history(arg)
+            return None
+        self._render_error(f"未知命令: {cmd}（/help 查看可用命令）")
+        return None
+
+    def _print_help(self) -> None:
+        print("内置命令:")
+        print("  /alias <name> <expansion>   添加/更新别名")
+        print("  /alias <name>               查看别名")
+        print("  /alias -d <name>            删除别名")
+        print("  /aliases                    列出所有别名")
+        print("  /history [N]                显示最近 N 条历史（默认 20）")
+        print("  /help                       显示此帮助")
+        print("  /quit                       退出")
+
+    def _handle_alias_cmd(self, arg: str) -> None:
+        """处理 /alias 子命令"""
+        arg = arg.strip()
+        if not arg:
+            self._list_aliases()
+            return
+        if arg.startswith("-d "):
+            name = arg[3:].strip()
+            if self._aliases.remove(name):
+                print(f"已删除别名: {name}")
+            else:
+                self._render_error(f"别名不存在: {name}")
+            return
+        # /alias name expansion...
+        parts = arg.split(maxsplit=1)
+        if len(parts) == 1:
+            # 查看
+            exp = self._aliases.get(parts[0])
+            if exp is not None:
+                print(f"{parts[0]} = {exp}")
+            else:
+                self._render_error(f"别名不存在: {parts[0]}")
+            return
+        name, expansion = parts
+        is_new = self._aliases.add(name, expansion)
+        print(f"{'已添加' if is_new else '已更新'}别名: {name} = {expansion}")
+
+    def _list_aliases(self) -> None:
+        aliases = self._aliases.list()
+        if not aliases:
+            print("（无别名，用 /alias <name> <expansion> 添加）")
+            return
+        for name in sorted(aliases):
+            print(f"  {name} = {aliases[name]}")
+
+    def _show_history(self, arg: str) -> None:
+        try:
+            n = int(arg) if arg.strip() else 20
+        except ValueError:
+            n = 20
+        try:
+            recs = self._history.recent(limit=n, session_id=None)
+        except DracoError as e:
+            self._render_draco_error(e)
+            return
+        if not recs:
+            print("（无历史记录）")
+            return
+        print(f"最近 {len(recs)} 条历史:")
+        for r in reversed(recs):  # 时间正序显示
+            status = "OK" if r.exit_code == 0 else (f"×{r.exit_code}" if r.exit_code is not None else "?")
+            print(f"  [{status}] {r.raw_input}")
+
+    def _render_error(self, msg: str) -> None:
+        if getattr(self, "_rich", False):
+            from rich.console import Console
+            Console().print(f"[bold red]错误:[/] {msg}")
+        else:
+            print(f"错误: {msg}", file=sys.stderr)
+
+    def _render_draco_error(self, err: DracoError) -> None:
+        if getattr(self, "_rich", False):
+            from rich.console import Console
+            from rich.panel import Panel
+
+            Console().print(
+                Panel(
+                    f"[bold red]{err.code}[/]\n{err.message}",
+                    title="命令失败",
+                    border_style="red",
+                )
+            )
+        else:
+            print(f"[{err.code}] {err.message}", file=sys.stderr)
+
+    def _render_block(self, result) -> None:
+        msg = result.block_reason or "被钩子阻断"
+        if getattr(self, "_rich", False):
+            from rich.console import Console
+            Console().print(f"[bold yellow]已阻断:[/] {msg}")
+        else:
+            print(f"已阻断: {msg}", file=sys.stderr)
+
+
+def main() -> None:
+    """入口函数（pyproject scripts 指向）"""
+    app = OpenDracoCLI()
+    try:
+        asyncio.run(app.run())
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()
