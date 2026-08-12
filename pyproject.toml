@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "opendracocli"
 version = "0.1.0"
-description = "OpenDracoCLI — AI 时代的智能终端 (P3: AI 智能层)"
+description = "OpenDracoCLI — AI 时代的智能终端 (P4: Agent 自动化)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

@@ -64,6 +64,13 @@ class DracoConfig:
     )
     emotion_inertia: float = 0.3
 
+    # P4 Agent 自动化（默认关闭，显式开启）
+    agent_enabled: bool = False
+    functions_file: str = "~/.opendracocli/functions.py"
+    agent_code_sandbox: bool = True          # AI 生成代码做 AST 检查
+    agent_auto_confirm_generated: bool = False  # AI 生成代码默认需确认
+    agent_max_gen_tokens: int = 1024
+
     def __post_init__(self) -> None:
         # 环境变量覆盖
         for f in fields(self):
@@ -142,6 +149,11 @@ class DracoConfig:
     def builtin_roles_dir(self) -> Path:
         """包内置命令角色卡目录"""
         return Path(__file__).parent / "ai" / "roles"
+
+    @property
+    def functions_file_resolved(self) -> Path:
+        """P4 用户函数文件路径（展开 ~ 和环境变量）"""
+        return Path(_expand(self.functions_file))
 
     @property
     def ai_api_key_effective(self) -> str:
