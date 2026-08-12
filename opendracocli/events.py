@@ -33,6 +33,11 @@ EVT_AI_RISK_ASSESS = "AIRiskAssess"       # AI 风险评估
 EVT_AI_PERCEPTION = "AIPerception"        # 感知建议
 EVT_AI_EMOTION_UPDATE = "AIEmotionUpdate"  # 情感更新
 
+# P4 Agent 自动化
+EVT_AGENT_EXECUTED = "AgentExecuted"            # Python 通道执行（成功/失败）
+EVT_FUNCTION_CALLED = "FunctionCalled"          # 用户函数被调用
+EVT_AGENT_CODE_GENERATED = "AgentCodeGenerated"  # AI 生成代码
+
 
 @dataclass
 class Event:

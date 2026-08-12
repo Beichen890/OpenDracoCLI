@@ -3,9 +3,10 @@
 特性:
   - prompt_toolkit 提供输入行：历史回溯（上下方向键）、Tab 补全、多行
   - rich 渲染输出（彩色 stdout/stderr、错误面板）
-  - 内置 slash 命令：/alias /aliases /history /risk /ai /help /quit
+  - 内置 slash 命令：/alias /aliases /history /risk /ai /agent /help /quit
   - P2 风控：RiskAssessmentHook + SandboxExecutor 自动接线
   - P3 AI：CorrectionHook + PerceptionHook + AIRiskHook（ai_enabled 时接线）
+  - P4 Agent：PythonChannelExecutor + /agent 命令族（agent_enabled 时接线）
   - 会话 ID（启动生成）
 """
 
@@ -18,6 +19,14 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from .agent.code_generator import CodeGenerator, GeneratedFunction
+from .agent.code_runner import CodeRunner
+from .agent.context import AgentContext
+from .agent.function_registry import FunctionRegistry, get_global_registry as get_global_func_registry
+from .agent.function_registry import reset_global_registry as reset_global_func_registry
+from .agent.python_executor import AgentExecResult, PythonChannelExecutor
+from .agent.arg_parser import ArgParseError, parse_call_args
+from .agent.templates import get_template, list_templates
 from .ai.character import RoleRegistry, get_global_registry as get_global_role_registry
 from .ai.client import LLMClient, get_global_client, reset_global_client
 from .ai.corrector import Corrector
@@ -26,7 +35,7 @@ from .ai.perception import PerceptionEngine
 from .ai.risk_advisor import RiskAdvisor
 from .aliases.manager import AliasManager, get_global_manager
 from .config import DracoConfig, get_global_config
-from .errors import DracoError
+from .errors import DracoError, make_error
 from .events import EVT_SESSION_ENDED, EVT_SESSION_STARTED, Event, get_global_bus
 from .history.store import HistoryStore, get_global_store
 from .hooks.ai_risk_hook import AIRiskHook
@@ -110,6 +119,15 @@ class OpenDracoCLI:
         self._ai_risk_hook: Optional[AIRiskHook] = None
         if self._ai_enabled:
             self._setup_ai()
+
+        # P4 Agent 自动化（条件接线）
+        self._agent_enabled = bool(self._config.agent_enabled)
+        self._func_registry: Optional[FunctionRegistry] = None
+        self._py_executor: Optional[PythonChannelExecutor] = None
+        self._code_generator: Optional[CodeGenerator] = None
+        self._code_runner: Optional[CodeRunner] = None
+        if self._agent_enabled:
+            self._setup_agent()
 
         self._session_id = str(uuid.uuid4())
         self._running = False
@@ -199,6 +217,52 @@ class OpenDracoCLI:
         self._pipeline._hooks = new_reg
         log.info("P3 AI 智能层已禁用")
 
+    def _setup_agent(self) -> None:
+        """初始化 P4 Agent 组件"""
+        self._code_runner = CodeRunner()
+        self._func_registry = get_global_func_registry()
+        self._func_registry.set_user_file(self._config.functions_file_resolved)
+
+        # 加载用户函数文件（不存在则跳过，不算错误）
+        try:
+            n = self._func_registry.load_user_file(self._config.functions_file_resolved)
+            if n > 0:
+                log.info("P4 加载 %d 个用户函数", n)
+        except DracoError as e:
+            log.warning("加载用户函数文件失败: %s", e)
+
+        # Python 通道执行器（共享 history + 事件）
+        self._py_executor = PythonChannelExecutor(
+            config=self._config,
+            history_store=self._history,
+            shell_runner=self._shell_runner_for_agent,
+        )
+
+        # 代码生成器（复用 P3 LLMClient，若 AI 未启用则不可用）
+        client = self._llm_client or get_global_client(self._config)
+        self._code_generator = CodeGenerator(
+            client,
+            platform=self._config.current_platform,
+            max_tokens=self._config.agent_max_gen_tokens,
+            runner=self._code_runner,
+        )
+
+        log.info("P4 Agent 自动化已启用 (functions=%s)", self._config.functions_file)
+
+    def _teardown_agent(self) -> None:
+        """卸载 P4 Agent 组件"""
+        reset_global_func_registry()
+        self._func_registry = None
+        self._py_executor = None
+        self._code_generator = None
+        self._code_runner = None
+        self._agent_enabled = False
+        log.info("P4 Agent 自动化已禁用")
+
+    async def _shell_runner_for_agent(self, cmd: str):
+        """AgentContext.shell 的 runner — 调 ShellPipeline（含 P2 风控 + P3 AI）"""
+        return await self._pipeline.run(cmd, session_id=self._session_id)
+
     async def run(self) -> None:
         """启动 TUI 主循环"""
         self._running = True
@@ -220,18 +284,23 @@ class OpenDracoCLI:
                 if self._ai_enabled
                 else "[dim]off[/]"
             )
+            agent_status = (
+                f"[green]on[/] ({len(self._func_registry.list()) if self._func_registry else 0} funcs)"
+                if self._agent_enabled
+                else "[dim]off[/]"
+            )
             console.print(
                 Panel.fit(
-                    "[bold cyan]OpenDracoCLI[/] — AI 时代的智能终端 (P3)\n"
-                    f"平台: {self._config.current_platform}  会话: {self._session_id[:8]}  AI: {ai_status}\n"
-                    "输入 [green]/help[/] 查看内置命令，[green]/ai[/] 查看 AI 状态，[green]/quit[/] 退出",
+                    "[bold cyan]OpenDracoCLI[/] — AI 时代的智能终端 (P4)\n"
+                    f"平台: {self._config.current_platform}  会话: {self._session_id[:8]}  AI: {ai_status}  Agent: {agent_status}\n"
+                    "输入 [green]/help[/] 查看内置命令，[green]/ai[/] AI 状态，[green]/agent[/] Agent 状态，[green]/quit[/] 退出",
                     border_style="cyan",
                 )
             )
             self._rich = True
         except ImportError:
             self._rich = False
-            print("OpenDracoCLI (P3) — /help for commands, /ai for AI status, /quit to exit")
+            print("OpenDracoCLI (P4) — /help for commands, /ai for AI, /agent for Agent, /quit to exit")
 
         # 历史 tail 提示
         try:
@@ -297,7 +366,25 @@ class OpenDracoCLI:
             pass
 
     async def _exec_command(self, text: str) -> None:
-        """执行一条命令并渲染输出"""
+        """执行一条命令并渲染输出
+
+        P4: 先判断是否命中已注册函数（Python 通道），否则走 shell 通道
+        """
+        # P4: 通道路由 — 首 token 命中函数注册表则走 Python 通道
+        if self._agent_enabled and self._func_registry is not None:
+            tokens = text.split()
+            first_token = tokens[0] if tokens else ""
+            reg = self._func_registry.match(first_token)
+            if reg is not None:
+                # 剩余部分作为参数
+                rest = text[len(first_token):].strip()
+                await self._exec_agent(text, reg, rest)
+                return
+
+        await self._exec_shell(text)
+
+    async def _exec_shell(self, text: str) -> None:
+        """走 shell 通道（P1-P3 管线）"""
         try:
             result = await self._pipeline.run(
                 text, session_id=self._session_id
@@ -341,6 +428,77 @@ class OpenDracoCLI:
         if self._ai_enabled and self._perception is not None:
             self._maybe_render_suggestions()
 
+    async def _exec_agent(self, raw_input: str, reg_func, args_str: str) -> None:
+        """走 Python 通道执行用户函数"""
+        if self._py_executor is None:
+            self._render_error("Agent 通道未初始化")
+            return
+
+        # 参数解析与绑定
+        try:
+            bound_args, bound_kwargs = parse_call_args(
+                args_str,
+                reg_func.param_names_no_ctx,
+                reg_func.param_types,
+                reg_func.defaults,
+            )
+        except ArgParseError as e:
+            self._render_draco_error(make_error("draco.agent.args", reason=e.message))
+            return
+
+        # 执行
+        try:
+            result: AgentExecResult = await self._py_executor.execute(
+                reg_func,
+                bound_args,
+                bound_kwargs,
+                cwd=os.getcwd(),
+                session_id=self._session_id,
+            )
+        except Exception as e:
+            log.exception("agent executor crashed")
+            self._render_error(f"Agent 通道异常: {e}")
+            return
+
+        # 渲染输出
+        if result.stdout:
+            sys.stdout.write(result.stdout)
+            if not result.stdout.endswith("\n"):
+                sys.stdout.write("\n")
+            sys.stdout.flush()
+
+        if not result.success:
+            if result.stderr:
+                sys.stderr.write(result.stderr)
+                if not result.stderr.endswith("\n"):
+                    sys.stderr.write("\n")
+                sys.stderr.flush()
+            self._render_error(
+                f"函数 {result.func_name} 执行失败"
+                + (f": {result.error}" if result.error else "")
+            )
+            return
+
+        # 渲染返回值（若非 None 且 stdout 未含 print）
+        if result.return_value is not None:
+            rv = result.return_value
+            if isinstance(rv, str):
+                # 字符串返回值直接打印（若 stdout 已有输出则不重复）
+                if not result.stdout:
+                    print(rv)
+            else:
+                import json
+                try:
+                    # 优先 JSON 序列化
+                    s = json.dumps(rv, ensure_ascii=False, default=str, indent=2)
+                    if getattr(self, "_rich", False):
+                        from rich.console import Console
+                        Console().print(f"[dim]→ {s}[/]")
+                    else:
+                        print(f"→ {s}")
+                except (TypeError, ValueError):
+                    print(f"→ {rv!r}")
+
     async def _maybe_render_correction(self) -> None:
         """渲染并应用 AI 纠错建议"""
         if self._correction_hook is None:
@@ -371,9 +529,9 @@ class OpenDracoCLI:
         # 询问是否应用
         ok = await self._confirmer.ask_yes("应用建议命令？", default=False)
         if ok:
-            # 走完整管线（含 P2 风控，不绕过）
+            # 走 shell 通道（含 P2 风控，不绕过）
             print(f"→ 执行: {suggested}")
-            await self._exec_command(suggested)
+            await self._exec_shell(suggested)
 
     def _maybe_render_suggestions(self) -> None:
         """渲染感知主动建议"""
@@ -421,6 +579,9 @@ class OpenDracoCLI:
         if cmd == "/ai":
             await self._handle_ai_cmd(arg)
             return None
+        if cmd == "/agent":
+            await self._handle_agent_cmd(arg)
+            return None
         self._render_error(f"未知命令: {cmd}（/help 查看可用命令）")
         return None
 
@@ -441,6 +602,16 @@ class OpenDracoCLI:
         print("  /ai role [cmd]              查看/列出命令角色卡")
         print("  /ai context                 查看感知上下文")
         print("  /ai emotion                 查看当前情感状态")
+        print("  /agent                      显示 Agent 状态")
+        print("  /agent on                   启用 Agent 通道")
+        print("  /agent off                  禁用 Agent 通道")
+        print("  /agent list                 列出已注册函数")
+        print("  /agent show <name>          查看函数源码")
+        print("  /agent reload               重新加载 functions.py")
+        print("  /agent gen <intent>         AI 生成函数（代码即行动）")
+        print("  /agent run <name> [args]    显式调用函数")
+        print("  /agent templates            列出可用模板")
+        print("  /agent apply <template>     应用模板到 functions.py")
         print("  /help                       显示此帮助")
         print("  /quit                       退出")
 
@@ -835,6 +1006,379 @@ class OpenDracoCLI:
             for label, val in zip(EMOTION_LABELS, vec):
                 bar = "█" * int(val * 20)
                 print(f"  {label}: {val:.3f} {bar}")
+
+    async def _handle_agent_cmd(self, arg: str) -> None:
+        """处理 /agent 子命令"""
+        arg = arg.strip()
+        if not arg:
+            self._show_agent_status()
+            return
+        parts = arg.split(maxsplit=1)
+        sub = parts[0].lower()
+        rest = parts[1] if len(parts) > 1 else ""
+
+        if sub == "on":
+            self._agent_on()
+            return
+        if sub == "off":
+            self._agent_off()
+            return
+        if sub == "list":
+            self._agent_list()
+            return
+        if sub == "show":
+            if not rest:
+                self._render_error("用法: /agent show <name>")
+                return
+            self._agent_show(rest.strip())
+            return
+        if sub == "reload":
+            self._agent_reload()
+            return
+        if sub == "gen":
+            if not rest:
+                self._render_error("用法: /agent gen <intent>")
+                return
+            await self._agent_gen(rest)
+            return
+        if sub == "run":
+            if not rest:
+                self._render_error("用法: /agent run <name> [args]")
+                return
+            await self._agent_run(rest)
+            return
+        if sub == "templates":
+            self._agent_templates()
+            return
+        if sub == "apply":
+            if not rest:
+                self._render_error("用法: /agent apply <template>")
+                return
+            self._agent_apply(rest.strip())
+            return
+        self._render_error(
+            f"未知子命令: {sub}（可用: on/off/list/show/reload/gen/run/templates/apply）"
+        )
+
+    def _show_agent_status(self) -> None:
+        """显示 Agent 通道状态"""
+        enabled = self._agent_enabled
+        func_count = len(self._func_registry.list()) if self._func_registry else 0
+        user_funcs = self._func_registry.list_user() if self._func_registry else {}
+        gen_available = (
+            self._code_generator is not None
+            and self._llm_client is not None
+            and self._llm_client.is_available()
+        )
+
+        if getattr(self, "_rich", False):
+            from rich.console import Console
+            from rich.table import Table
+
+            console = Console()
+            table = Table(title="Agent 自动化状态", border_style="magenta")
+            table.add_column("项", style="bold")
+            table.add_column("值")
+            table.add_row("启用", "[green]是[/]" if enabled else "[dim]否[/]")
+            table.add_row("函数文件", self._config.functions_file)
+            table.add_row("已注册函数", str(func_count))
+            table.add_row("用户函数", str(len(user_funcs)))
+            table.add_row(
+                "代码生成",
+                "[green]可用[/]" if gen_available else "[dim]不可用（需 AI）[/]",
+            )
+            table.add_row("沙箱检查", "是" if self._config.agent_code_sandbox else "否")
+            console.print(table)
+        else:
+            print(f"Agent 自动化状态:")
+            print(f"  启用: {'是' if enabled else '否'}")
+            print(f"  函数文件: {self._config.functions_file}")
+            print(f"  已注册函数: {func_count}")
+            print(f"  代码生成: {'可用' if gen_available else '不可用（需 AI）'}")
+
+    def _agent_on(self) -> None:
+        """启用 Agent 通道"""
+        if self._agent_enabled:
+            print("Agent 已启用")
+            return
+        self._agent_enabled = True
+        self._config.agent_enabled = True
+        self._setup_agent()
+        n = len(self._func_registry.list()) if self._func_registry else 0
+        print(f"✅ Agent 已启用 ({n} 个函数)")
+        if n == 0:
+            print(f"  提示: 在 {self._config.functions_file_resolved} 定义函数，或 /agent templates 查看模板")
+
+    def _agent_off(self) -> None:
+        """禁用 Agent 通道"""
+        if not self._agent_enabled:
+            print("Agent 已是关闭状态")
+            return
+        self._teardown_agent()
+        print("✅ Agent 已禁用")
+
+    def _agent_list(self) -> None:
+        """列出已注册函数"""
+        if self._func_registry is None:
+            self._render_error("Agent 未启用，先用 /agent on")
+            return
+        funcs = self._func_registry.list()
+        if not funcs:
+            print("（无函数，用 /agent templates 查看模板，或 /agent gen 生成）")
+            return
+        if getattr(self, "_rich", False):
+            from rich.console import Console
+            from rich.table import Table
+
+            table = Table(title="已注册函数", border_style="magenta")
+            table.add_column("函数名", style="bold")
+            table.add_column("async")
+            table.add_column("参数")
+            table.add_column("说明")
+            for name, rf in sorted(funcs.items()):
+                params = ", ".join(rf.param_names_no_ctx) or "-"
+                doc = rf.doc.split("\n")[0][:40] if rf.doc else "-"
+                table.add_row(name, "是" if rf.is_async else "否", params, doc)
+            Console().print(table)
+        else:
+            print("已注册函数:")
+            for name, rf in sorted(funcs.items()):
+                params = ", ".join(rf.param_names_no_ctx) or "-"
+                async_mark = "async " if rf.is_async else ""
+                print(f"  {async_mark}{name}({params})  — {rf.doc.split(chr(10))[0][:40] if rf.doc else '-'}")
+
+    def _agent_show(self, name: str) -> None:
+        """查看函数源码"""
+        if self._func_registry is None:
+            self._render_error("Agent 未启用，先用 /agent on")
+            return
+        rf = self._func_registry.get(name)
+        if rf is None:
+            self._render_error(f"函数不存在: {name}")
+            return
+        if getattr(self, "_rich", False):
+            from rich.console import Console
+            from rich.panel import Panel
+            from rich.syntax import Syntax
+
+            Console().print(
+                Panel(
+                    Syntax(rf.source, "python", theme="monokai"),
+                    title=f"{name} (async={rf.is_async})",
+                    border_style="magenta",
+                )
+            )
+        else:
+            print(f"--- {name} (async={rf.is_async}) ---")
+            print(rf.source)
+
+    def _agent_reload(self) -> None:
+        """重新加载 functions.py"""
+        if self._func_registry is None:
+            self._render_error("Agent 未启用，先用 /agent on")
+            return
+        try:
+            n = self._func_registry.reload()
+            print(f"✅ 重新加载完成 ({n} 个函数)")
+        except DracoError as e:
+            self._render_draco_error(e)
+
+    async def _agent_gen(self, intent: str) -> None:
+        """AI 生成函数（代码即行动）"""
+        if self._code_generator is None:
+            self._render_error("Agent 未启用，先用 /agent on")
+            return
+        if not self._llm_client or not self._llm_client.is_available():
+            self._render_error("AI 不可用，先用 /ai on 启用 AI")
+            return
+
+        if getattr(self, "_rich", False):
+            from rich.console import Console
+            Console().print(f"[magenta]意图:[/] {intent}")
+            Console().print("[dim]生成函数中...[/]")
+        else:
+            print(f"意图: {intent}")
+            print("生成函数中...")
+
+        context_summary = ""
+        if self._perception is not None:
+            context_summary = self._perception.get_context_summary()
+
+        gen: GeneratedFunction = await self._code_generator.generate(
+            intent, context_summary=context_summary
+        )
+
+        if not gen.ok:
+            self._render_error(f"代码生成失败: {gen.error}")
+            return
+
+        # 渲染生成的代码
+        if getattr(self, "_rich", False):
+            from rich.console import Console
+            from rich.panel import Panel
+            from rich.syntax import Syntax
+
+            Console().print(
+                Panel(
+                    Syntax(gen.code, "python", theme="monokai"),
+                    title=f"AI 生成 — {gen.func_name}",
+                    border_style="magenta",
+                )
+            )
+        else:
+            print(f"--- AI 生成 — {gen.func_name} ---")
+            print(gen.code)
+            print("---")
+
+        # 询问是否执行
+        ok = await self._confirmer.ask_yes("执行此函数？", default=False)
+        if not ok:
+            # 询问是否保存到 functions.py
+            save = await self._confirmer.ask_yes("保存到 functions.py？", default=False)
+            if save:
+                self._save_function_to_file(gen.code, gen.func_name)
+            return
+
+        # 执行生成的函数
+        await self._exec_generated(gen)
+
+    async def _exec_generated(self, gen: GeneratedFunction) -> None:
+        """执行 AI 生成的函数"""
+        if self._code_runner is None or self._py_executor is None:
+            self._render_error("Agent 通道未初始化")
+            return
+        try:
+            func, func_name, _violations = self._code_runner.exec_function_code(
+                gen.code, strict=self._config.agent_code_sandbox
+            )
+        except DracoError as e:
+            self._render_draco_error(e)
+            return
+
+        if func is None or not callable(func):
+            self._render_error("生成的代码未定义可调用函数")
+            return
+
+        # 构造临时 RegisteredFunction
+        import inspect
+        from .agent.function_registry import RegisteredFunction
+
+        try:
+            sig = inspect.signature(func)
+        except (ValueError, TypeError):
+            self._render_error("无法获取生成函数的签名")
+            return
+
+        rf = RegisteredFunction(
+            name=func_name or gen.func_name or "generated",
+            func=func,
+            signature=sig,
+            doc=inspect.getdoc(func) or "",
+            source=gen.code,
+            is_builtin=False,
+            is_async=inspect.iscoroutinefunction(func),
+        )
+
+        # 执行（无参数）
+        try:
+            result: AgentExecResult = await self._py_executor.execute(
+                rf, [], {}, cwd=os.getcwd(), session_id=self._session_id
+            )
+        except Exception as e:
+            log.exception("generated function exec crashed")
+            self._render_error(f"执行失败: {e}")
+            return
+
+        if result.stdout:
+            sys.stdout.write(result.stdout)
+            if not result.stdout.endswith("\n"):
+                sys.stdout.write("\n")
+            sys.stdout.flush()
+
+        if not result.success:
+            if result.stderr:
+                sys.stderr.write(result.stderr)
+                sys.stderr.flush()
+            self._render_error(f"函数执行失败: {result.error}")
+            return
+
+        if result.return_value is not None:
+            import json
+            try:
+                s = json.dumps(result.return_value, ensure_ascii=False, default=str, indent=2)
+                print(f"→ {s}")
+            except (TypeError, ValueError):
+                print(f"→ {result.return_value!r}")
+
+        # 询问是否保存
+        save = await self._confirmer.ask_yes("保存到 functions.py 以便复用？", default=False)
+        if save:
+            self._save_function_to_file(gen.code, gen.func_name)
+
+    def _save_function_to_file(self, code: str, func_name: str) -> None:
+        """把函数源码追加到 functions.py"""
+        path = self._config.functions_file_resolved
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write("\n\n# 由 /agent gen 生成\n")
+                f.write(code)
+                if not code.endswith("\n"):
+                    f.write("\n")
+            print(f"✅ 已保存到 {path}")
+            # 重新加载
+            if self._func_registry is not None:
+                try:
+                    self._func_registry.reload()
+                    print(f"   已重新加载（{len(self._func_registry.list())} 个函数）")
+                except DracoError as e:
+                    self._render_error(f"重新加载失败: {e.message}")
+        except OSError as e:
+            self._render_error(f"保存失败: {e}")
+
+    async def _agent_run(self, rest: str) -> None:
+        """/agent run <name> [args] — 显式调用函数"""
+        if self._func_registry is None:
+            self._render_error("Agent 未启用，先用 /agent on")
+            return
+        parts = rest.split(maxsplit=1)
+        name = parts[0]
+        args_str = parts[1] if len(parts) > 1 else ""
+        rf = self._func_registry.get(name)
+        if rf is None:
+            self._render_error(f"函数不存在: {name}")
+            return
+        await self._exec_agent(rest, rf, args_str)
+
+    def _agent_templates(self) -> None:
+        """列出可用模板"""
+        templates = list_templates()
+        if not templates:
+            print("（无模板）")
+            return
+        if getattr(self, "_rich", False):
+            from rich.console import Console
+            from rich.table import Table
+
+            table = Table(title="函数模板", border_style="magenta")
+            table.add_column("模板名", style="bold")
+            table.add_column("说明")
+            for t in templates:
+                table.add_row(t.name, t.description)
+            Console().print(table)
+        else:
+            print("函数模板:")
+            for t in templates:
+                print(f"  {t.name}  — {t.description}")
+
+    def _agent_apply(self, name: str) -> None:
+        """应用模板到 functions.py"""
+        try:
+            tpl = get_template(name)
+        except KeyError:
+            self._render_error(f"模板不存在: {name}（/agent templates 查看可用模板）")
+            return
+        self._save_function_to_file(tpl.code, tpl.name)
 
     def _handle_alias_cmd(self, arg: str) -> None:
         """处理 /alias 子命令"""

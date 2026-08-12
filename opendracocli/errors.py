@@ -34,6 +34,13 @@ ERR_AI_TIMEOUT = "draco.ai.timeout"                # AI 调用超时
 ERR_AI_PARSE_FAILED = "draco.ai.parse_failed"      # AI 输出解析失败
 ERR_AI_RISK_DENIED = "draco.ai.risk_denied"        # AI 风控拒绝
 
+# P4 Agent 自动化
+ERR_AGENT_SYNTAX = "draco.agent.syntax"            # 用户函数语法错误
+ERR_AGENT_SANDBOX = "draco.agent.sandbox"          # 沙箱拦截
+ERR_FUNCTION_NOT_FOUND = "draco.function.not_found"
+ERR_AGENT_ARGS = "draco.agent.args"                # 参数解析失败
+ERR_AGENT_EXEC_FAILED = "draco.agent.exec_failed"  # 函数执行失败
+
 
 # 可翻译消息表（key = 错误码, value = 默认中文消息模板）
 # 注意：占位符名不能与 make_error 的 keyword-only 参数 detail 冲突。
@@ -56,6 +63,11 @@ _DEFAULT_MESSAGES: Dict[str, str] = {
     ERR_AI_TIMEOUT: "AI 调用超时（{timeout}s）",
     ERR_AI_PARSE_FAILED: "AI 输出解析失败: {reason}",
     ERR_AI_RISK_DENIED: "AI 风控拒绝: {reason}",
+    ERR_AGENT_SYNTAX: "函数语法错误: {reason}",
+    ERR_AGENT_SANDBOX: "Agent 沙箱拦截: {reason}",
+    ERR_FUNCTION_NOT_FOUND: "函数不存在: {name}",
+    ERR_AGENT_ARGS: "参数解析失败: {reason}",
+    ERR_AGENT_EXEC_FAILED: "函数执行失败: {reason}",
 }
 
 # 可重试标记表
@@ -78,6 +90,11 @@ _RETRYABLE: Dict[str, bool] = {
     ERR_AI_TIMEOUT: True,
     ERR_AI_PARSE_FAILED: False,
     ERR_AI_RISK_DENIED: False,
+    ERR_AGENT_SYNTAX: False,
+    ERR_AGENT_SANDBOX: False,
+    ERR_FUNCTION_NOT_FOUND: False,
+    ERR_AGENT_ARGS: False,
+    ERR_AGENT_EXEC_FAILED: False,
 }
 
 

@@ -161,3 +161,45 @@ def strip_analysis(ai_text: str) -> str:
     import re
 
     return re.sub(r"<code>.+?</code>", "", ai_text, flags=re.DOTALL).strip()
+
+
+def build_code_gen_prompt(
+    *,
+    platform: str = "",
+    context_summary: str = "",
+) -> str:
+    """拼装代码生成 system prompt（代码即行动，参考 DracoHub CodingAgent）
+
+    让 LLM 生成符合签名的 Python 函数，直接调库完成意图，不经过 shell。
+    """
+    parts = [
+        "你是 OpenDracoCLI 的 Agent 代码生成器，遵循「代码即行动」原则。",
+        "用户会用自然语言描述意图，你需要生成一个 Python 函数来完成它。",
+        "",
+        "函数约定（严格遵守）：",
+        "  - 签名：def <name>(ctx, ...) -> Any，首参数必须是 ctx",
+        "  - 可用 async def（若涉及 await ctx.shell）",
+        "  - ctx.shell(cmd) 异步调用 shell（走风控，返回 dict），需 await",
+        '  - ctx.shell 返回 dict: {"success","exit_code","stdout","stderr","blocked"}',
+        "  - ctx.log(msg) 记录日志，ctx.print(msg) 打印 stdout",
+        "  - ctx.env 环境变量，ctx.cwd 工作目录，ctx.config 配置",
+        "  - 可 import 标准库（subprocess/ctypes/shutil 等被禁用，用 ctx.shell 代替）",
+        "  - 返回 dict 描述结果，便于序列化",
+        "",
+        "输出格式（严格遵守）：",
+        "  - 先用一句话说明函数用途",
+        "  - 然后用 ```python 代码块包裹完整函数源码",
+        "  - 不要输出额外解释",
+        "",
+        "安全约束：",
+        "  - 不要生成删除系统文件、提权、远程下载执行的代码",
+        "  - 涉及危险操作时用 ctx.shell 让 P2 风控兜底",
+        "  - 不要访问 __class__/__subclasses__ 等逃逸属性",
+    ]
+    if platform:
+        parts.append(f"  - 当前平台: {platform}")
+    if context_summary:
+        parts.append("")
+        parts.append("用户上下文（参考，勿直接复述）：")
+        parts.append(context_summary)
+    return "\n".join(parts)
