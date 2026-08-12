@@ -27,6 +27,12 @@ EVT_RISK_BLOCKED = "RiskBlocked"          # 高危命令被拦截
 EVT_AUTH_REQUIRED = "AuthRequired"        # 触发身份验证
 EVT_SANDBOX_VIOLATION = "SandboxViolation"  # 沙箱拦截
 
+# P3 AI 智能层
+EVT_AI_CORRECTION = "AICorrection"        # AI 纠错建议
+EVT_AI_RISK_ASSESS = "AIRiskAssess"       # AI 风险评估
+EVT_AI_PERCEPTION = "AIPerception"        # 感知建议
+EVT_AI_EMOTION_UPDATE = "AIEmotionUpdate"  # 情感更新
+
 
 @dataclass
 class Event:

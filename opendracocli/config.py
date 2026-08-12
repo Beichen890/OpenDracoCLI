@@ -45,6 +45,25 @@ class DracoConfig:
     require_auth_for: str = "critical"  # critical / danger / off
     pbkdf2_iterations: int = 100000
 
+    # P3 AI 智能层（默认关闭，显式开启）
+    ai_enabled: bool = False
+    ai_api_base: str = "http://localhost:8000/v1"
+    ai_api_key: str = ""
+    ai_model: str = "deepseek-chat"
+    ai_max_tokens: int = 512
+    ai_temperature: float = 0.4
+    ai_timeout: float = 30.0
+    ai_cooldown: float = 1.0
+    ai_auto_correct: bool = True
+    ai_roles_dir: str = "~/.opendracocli/roles"
+    ai_context_file: str = "~/.opendracocli/context.json"
+    ai_risk_enabled: bool = True
+    ai_perception_enabled: bool = True
+    emotion_weights: dict = field(
+        default_factory=lambda: {"user": 0.4, "history": 0.3, "character": 0.2, "random": 0.1}
+    )
+    emotion_inertia: float = 0.3
+
     def __post_init__(self) -> None:
         # 环境变量覆盖
         for f in fields(self):
@@ -66,6 +85,13 @@ class DracoConfig:
             # 列表字段：用 ; 或 : 分隔（Windows 优先 ;，Unix 优先 :）
             sep = ";" if sys.platform.startswith("win") else ":"
             setattr(self, name, [s.strip() for s in raw.split(sep) if s.strip()])
+        elif isinstance(cur, dict) or type_hint is dict:
+            # dict 字段：用 JSON 解析
+            import json as _json
+            try:
+                setattr(self, name, _json.loads(raw))
+            except (ValueError, TypeError):
+                pass
         else:
             setattr(self, name, raw)
 
@@ -103,6 +129,28 @@ class DracoConfig:
     def builtin_rules_path(self) -> Path:
         """包内置默认规则表"""
         return Path(__file__).parent / "security" / "rules.json"
+
+    @property
+    def ai_roles_dir_resolved(self) -> Path:
+        return Path(_expand(self.ai_roles_dir))
+
+    @property
+    def ai_context_file_resolved(self) -> Path:
+        return Path(_expand(self.ai_context_file))
+
+    @property
+    def builtin_roles_dir(self) -> Path:
+        """包内置命令角色卡目录"""
+        return Path(__file__).parent / "ai" / "roles"
+
+    @property
+    def ai_api_key_effective(self) -> str:
+        """有效 API key（占位符视为空）"""
+        key = self.ai_api_key.strip()
+        placeholders = {"", "your_api_key", "sk-your", "your-key", "placeholder"}
+        if key.lower() in placeholders:
+            return ""
+        return key
 
     @property
     def current_platform(self) -> str:
