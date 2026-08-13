@@ -1,6 +1,9 @@
 """Pipeline — 编排整条执行管线
 
-TaskStep 风格：parse → normalize → alias_expand → platform_map → risk(pre) → exec → post → history
+TaskStep 风格：parse → normalize → alias_expand → draco_func_route → risk(pre) → exec → post → history
+
+简单命令直接交给原生 shell（bash/cmd），不做命令名映射。
+复杂/常用任务由 Draco 函数用 Python 库直接实现，走 Python 通道。
 
 每步可观测，单步失败抛 DracoError，由上层捕获并发布 CommandFailed 事件。
 """
@@ -20,10 +23,11 @@ from ..hooks.registry import HookRegistry, get_global_registry
 from ..history.store import HistoryStore, get_global_store
 from ..logger import get_logger
 from .alias_expander import AliasExpander
-from .executor import ExecResult, SubprocessExecutor
+from .compose import ComposeEngine
+from .dispatcher import NativeDispatcher
+from .executor import ExecResult, SubprocessExecutor, serialize_ir
 from .normalizer import normalize
 from .parser import parse
-from .platform_mapper import PlatformMapper
 
 log = get_logger("shell.pipeline")
 
@@ -45,6 +49,7 @@ class PipelineResult:
     error: Optional[DracoError] = None
     blocked: bool = False
     block_reason: Optional[str] = None
+    new_cwd: Optional[str] = None
 
 
 class ShellPipeline:
@@ -57,7 +62,8 @@ class ShellPipeline:
         history_store: Optional[HistoryStore] = None,
         hook_registry: Optional[HookRegistry] = None,
         executor: Optional[SubprocessExecutor] = None,
-        platform_mapper: Optional[PlatformMapper] = None,
+        function_registry: Optional[Any] = None,
+        python_executor: Optional[Any] = None,
         sandbox_executor: Optional[Any] = None,
     ) -> None:
         self._config = config or get_global_config()
@@ -65,12 +71,23 @@ class ShellPipeline:
         self._history = history_store
         self._hooks = hook_registry or get_global_registry()
         self._executor = executor or SubprocessExecutor(config=self._config)
-        self._mapper = platform_mapper or PlatformMapper(config=self._config)
         self._expander = AliasExpander(
             manager=self._aliases, config=self._config
         )
+        # Draco 函数路由：命中注册函数走 Python 通道，否则原生 shell
+        self._function_registry = function_registry
+        self._python_executor = python_executor
         # P2: 沙箱执行器（可选，由 CLI 在启用风控时注入）
         self._sandbox_executor = sandbox_executor
+        # 原生内核 + 组合引擎（替代外部 shell）
+        # 三层路由：Rust 内核 → Draco 函数 → exec 兜底
+        # 组合语义（| > && || ;）由 ComposeEngine 自行编排，不依赖 shell
+        self._dispatcher = NativeDispatcher(
+            config=self._config,
+            function_registry=function_registry,
+            python_executor=python_executor,
+        )
+        self._compose = ComposeEngine(self._dispatcher)
 
     def set_sandbox_executor(self, sx: Any) -> None:
         """注入沙箱执行器（P2 风控启用时调用）"""
@@ -79,6 +96,16 @@ class ShellPipeline:
     def set_alias_manager(self, m: AliasManager) -> None:
         self._aliases = m
         self._expander.set_manager(m)
+
+    def set_function_registry(self, registry: Any) -> None:
+        """注入 Draco 函数注册表"""
+        self._function_registry = registry
+        self._dispatcher.set_function_registry(registry)
+
+    def set_python_executor(self, executor: Any) -> None:
+        """注入 Python 通道执行器"""
+        self._python_executor = executor
+        self._dispatcher.set_python_executor(executor)
 
     async def run(
         self,
@@ -91,15 +118,15 @@ class ShellPipeline:
         """执行一次完整管线
 
         流程:
-          1. parse       — 解析为 IR
-          2. normalize   — 归一化
-          3. alias_expand — 别名展开（产出抽象命令名）
-          4. platform_map — 平台映射（抽象 → 原生）
-          5. pre_exec    — PreExec 钩子链（可阻断/改写）
-          6. execute     — subprocess 执行
-          7. post_exec   — PostExec 钩子链（只读）
-          8. history     — 写 SQLite
-          9. event       — 发布事件
+          1. parse         — 解析为 IR
+          2. normalize     — 归一化
+          3. alias_expand  — 别名展开
+          4. draco_func_route — 命中 Draco 函数则走 Python 通道，否则原生 shell
+          5. pre_exec      — PreExec 钩子链（可阻断/改写）
+          6. execute       — subprocess / Python 通道执行
+          7. post_exec     — PostExec 钩子链（只读）
+          8. history       — 写 SQLite
+          9. event         — 发布事件
         """
         import os
 
@@ -117,17 +144,15 @@ class ShellPipeline:
         # --- 2. normalize ---
         normalize(ir)
 
-        # --- 3. alias expand (先于平台映射) ---
+        # --- 3. alias expand ---
         try:
             ir, alias_used = self._expander.expand(ir)
         except DracoError as e:
             return self._fail(result, e, started_at, session_id, effective_cwd)
         result.alias_used = alias_used
 
-        # --- 4. platform map ---
-        self._mapper.map(ir)
-
-        # 序列化 IR 元数据（存历史用）
+        # --- 4. canonical IR 序列化（存历史用）---
+        # 路由决策下沉到 NativeDispatcher（三层：Rust 内核 → Draco 函数 → exec 兜底）
         result.canonical_ir = ir.to_json()
 
         # --- 5. pre_exec hooks ---
@@ -183,21 +208,55 @@ class ShellPipeline:
             log.info("using sandbox executor for risk_level=%s", risk_level)
 
         # --- 6. execute ---
+        # 沙箱模式：执行前检查写路径是否在白名单内（违规直接拒绝，不执行）
+        if use_sandbox and self._sandbox_executor is not None:
+            violation = self._sandbox_executor.check(ctx.ir, effective_cwd)
+            if violation is not None:
+                log.warning(violation)
+                # 沙箱拦截：管线正常处理（success=True），命令未执行（exit_code=-1）
+                # blocked 仅表示风控钩子阻断，沙箱拦截不算 blocked
+                result.success = True
+                result.exit_code = -1
+                result.stderr = violation
+                result.mapped_command = serialize_ir(ctx.ir)
+                result.duration_ms = int((time.perf_counter() - start_perf) * 1000)
+                self._record(
+                    result, started_at, session_id, effective_cwd, stdout="", stderr=violation
+                )
+                get_global_bus().publish(
+                    Event(
+                        type=EVT_COMMAND_EXECUTED,
+                        payload={
+                            "raw_input": raw_input,
+                            "mapped_command": result.mapped_command,
+                            "exit_code": -1,
+                            "session_id": session_id,
+                            "sandbox_blocked": True,
+                        },
+                    )
+                )
+                return result
+
+        # 统一走 ComposeEngine：组合语义（| > && || ;）+ 三层路由（Rust→Python→exec）
+        # 危险命令已被 pre_exec 钩子阻断；cd 等命令的 new_cwd 透传给上层
         try:
-            exec_result: ExecResult = await executor.execute(
-                ctx.ir, cwd=effective_cwd, timeout=timeout
+            exec_result: ExecResult = await self._compose.execute(
+                ctx.ir, cwd=effective_cwd, timeout=timeout, session_id=session_id,
             )
         except DracoError as e:
             # timeout / cancelled
             result.mapped_command = ""
             return self._fail(result, e, started_at, session_id, effective_cwd)
 
-        result.success = True
+        result.success = exec_result.exit_code is not None
         result.mapped_command = exec_result.mapped_command
         result.exit_code = exec_result.exit_code
         result.stdout = exec_result.stdout
         result.stderr = exec_result.stderr
         result.duration_ms = exec_result.duration_ms
+        # cd 等命令返回新 cwd，透传给 CLI 应用到 session
+        if exec_result.new_cwd:
+            result.new_cwd = exec_result.new_cwd
 
         # --- 7. post_exec hooks (只读) ---
         try:
