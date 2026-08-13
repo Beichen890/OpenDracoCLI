@@ -93,3 +93,37 @@ def test_clear_to_cls_on_win():
     ir = CommandIR(nodes=[CommandNode(name="clear", args=[])])
     mapper.map(ir)
     assert ir.nodes[0].name == "cls"
+
+
+def test_ipconfig_to_ifconfig_on_linux():
+    """ipconfig (Windows) → ifconfig (Unix) 映射"""
+    mapper = PlatformMapper(config=_LinuxConfig())
+
+    ir = CommandIR(nodes=[CommandNode(name="ipconfig", args=[])])
+    mapper.map(ir)
+    assert ir.nodes[0].name == "ifconfig"
+
+
+def test_ipconfig_passthrough_on_win():
+    """Windows 平台 ipconfig 原样透传（win_to_unix 表不作用于 win 平台）"""
+    mapper = PlatformMapper(config=_WinConfig())
+
+    ir = CommandIR(nodes=[CommandNode(name="ipconfig", args=[])])
+    mapper.map(ir)
+    assert ir.nodes[0].name == "ipconfig"
+
+
+def test_network_diag_commands_mapped_on_linux():
+    """常用网络诊断命令的双语法映射"""
+    mapper = PlatformMapper(config=_LinuxConfig())
+
+    cases = {
+        "ipconfig": "ifconfig",
+        "tracert": "traceroute",
+        "tasklist": "ps",
+        "taskkill": "kill",
+    }
+    for win_name, unix_name in cases.items():
+        ir = CommandIR(nodes=[CommandNode(name=win_name, args=[])])
+        mapper.map(ir)
+        assert ir.nodes[0].name == unix_name, f"{win_name} → {ir.nodes[0].name}"
