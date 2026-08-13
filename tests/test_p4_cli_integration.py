@@ -29,8 +29,10 @@ def test_agent_not_initialized_when_disabled(isolated_cfg):
 
     app = OpenDracoCLI()
     assert app._agent_enabled is False
-    assert app._func_registry is None
-    assert app._py_executor is None
+    # Draco 函数默认注册（不依赖 agent_enabled）
+    assert app._func_registry is not None
+    assert app._py_executor is not None
+    # code_generator 仅在 agent_enabled 时创建
     assert app._code_generator is None
 
 
@@ -183,7 +185,8 @@ async def test_agent_on_off(isolated_cfg):
 
     app._agent_off()
     assert app._agent_enabled is False
-    assert app._func_registry is None
+    # 内置 Draco 函数保留（仅用户函数被卸载）
+    assert app._func_registry is not None
 
 
 @pytest.mark.asyncio

@@ -25,14 +25,13 @@ class DracoConfig:
     """
 
     history_db_path: str = "~/.opendracocli/history.db"
-    mappings_dir: str = "mappings"  # 相对包目录
     aliases_file: str = "~/.opendracocli/aliases.json"
     stdout_summary_lines: int = 20
     stderr_summary_lines: int = 20
     exec_timeout: float = 3600.0
     max_alias_depth: int = 3
     log_level: str = "INFO"
-    # Windows 用 cmd /c, Unix 用 bash -c；可被环境变量覆盖为 powershell/zsh 等
+    # Windows 用 cmd /c, Unix 用 bash -c（不兼容 PowerShell）
     windows_shell: str = "cmd"
     unix_shell: str = "bash"
 
@@ -123,15 +122,6 @@ class DracoConfig:
     @property
     def aliases_file_resolved(self) -> Path:
         return Path(_expand(self.aliases_file))
-
-    @property
-    def mappings_dir_resolved(self) -> Path:
-        """映射表目录的绝对路径（相对包目录解析）"""
-        p = Path(self.mappings_dir)
-        if p.is_absolute():
-            return p
-        # 相对包目录（mappings_dir 默认 "mappings"，即包内子目录）
-        return Path(__file__).parent / p
 
     @property
     def security_rules_file_resolved(self) -> Path:
@@ -226,14 +216,14 @@ class DracoConfig:
     def native_shell(self) -> tuple[str, list[str]]:
         """返回当前平台原生 shell 的 (executable, prefix_args)
 
+        Windows 统一用 cmd /c，Unix 用 bash -c（不兼容 PowerShell）。
         用于 subprocess 调用：shell_executable + prefix + [command_str]
         """
         if self.current_platform == "win":
             shell = self.windows_shell
             if shell == "cmd":
                 return ("cmd.exe", ["/c"])
-            if shell == "powershell":
-                return ("powershell.exe", ["-NoProfile", "-Command"])
+            # 用户若强行配置其他 shell，按 cmd 风格 /c 调用
             return (shell, ["/c"])
         # Unix-like
         shell = self.unix_shell

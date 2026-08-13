@@ -53,9 +53,9 @@ from .shell.pipeline import ShellPipeline
 log = get_logger("cli")
 
 
-def _get_prompt_text() -> str:
+def _get_prompt_text(cwd: Optional[str] = None) -> str:
     """生成提示符（含 cwd）"""
-    cwd = os.getcwd()
+    cwd = cwd or os.getcwd()
     # 缩短 home 路径
     home = os.path.expanduser("~")
     if cwd.startswith(home):
@@ -97,6 +97,17 @@ class OpenDracoCLI:
         self._sandbox._inner = self._pipeline._executor
         self._pipeline.set_sandbox_executor(self._sandbox)
 
+        # P4 Agent 标志（需在 _setup_draco_funcs 之前，决定是否加载用户函数）
+        self._agent_enabled = bool(self._config.agent_enabled)
+
+        # Draco 内置函数：默认注册（不依赖 agent_enabled）
+        # 命中 Draco 函数走 Python 通道，否则透传原生 shell
+        self._func_registry: Optional[FunctionRegistry] = None
+        self._py_executor: Optional[PythonChannelExecutor] = None
+        self._code_generator: Optional[CodeGenerator] = None
+        self._code_runner: Optional[CodeRunner] = None
+        self._setup_draco_funcs()
+
         # 注册 RiskAssessmentHook（priority=10，最先执行）
         self._risk_hook = RiskAssessmentHook(
             assessor=self._assessor,
@@ -120,17 +131,48 @@ class OpenDracoCLI:
         if self._ai_enabled:
             self._setup_ai()
 
-        # P4 Agent 自动化（条件接线）
-        self._agent_enabled = bool(self._config.agent_enabled)
-        self._func_registry: Optional[FunctionRegistry] = None
-        self._py_executor: Optional[PythonChannelExecutor] = None
-        self._code_generator: Optional[CodeGenerator] = None
-        self._code_runner: Optional[CodeRunner] = None
+        # P4 Agent 自动化（条件接线，仅初始化代码生成器）
+        # _agent_enabled 已在 _setup_draco_funcs 之前设置
         if self._agent_enabled:
             self._setup_agent()
 
         self._session_id = str(uuid.uuid4())
         self._running = False
+        # session cwd：cd 命令返回 new_cwd，更新此值并传给 pipeline（持久化）
+        self._session_cwd = os.getcwd()
+
+    def _setup_draco_funcs(self) -> None:
+        """注册 Draco 内置函数并接入 pipeline
+
+        内置函数始终注册（用 Python 库实现跨平台任务）。
+        用户函数文件仅在 agent_enabled 时叠加注册。
+        """
+        from .draco_funcs.registry import register_builtins
+
+        self._func_registry = get_global_func_registry()
+        n_builtin = register_builtins(self._func_registry)
+        log.info("注册 %d 个内置 Draco 函数", n_builtin)
+
+        # 用户函数文件仅在 agent_enabled 时加载
+        if self._agent_enabled:
+            try:
+                self._func_registry.set_user_file(self._config.functions_file_resolved)
+                n_user = self._func_registry.load_user_file(self._config.functions_file_resolved)
+                if n_user > 0:
+                    log.info("加载 %d 个用户函数", n_user)
+            except DracoError as e:
+                log.warning("加载用户函数文件失败: %s", e)
+
+        # Python 通道执行器（共享 history + 事件）
+        self._py_executor = PythonChannelExecutor(
+            config=self._config,
+            history_store=self._history,
+            shell_runner=self._shell_runner_for_agent,
+        )
+
+        # 接入 pipeline
+        self._pipeline.set_function_registry(self._func_registry)
+        self._pipeline.set_python_executor(self._py_executor)
 
     def _setup_ai(self) -> None:
         """初始化 P3 AI 组件并注册钩子"""
@@ -218,25 +260,12 @@ class OpenDracoCLI:
         log.info("P3 AI 智能层已禁用")
 
     def _setup_agent(self) -> None:
-        """初始化 P4 Agent 组件"""
+        """初始化 P4 Agent 组件（代码生成器）
+
+        Draco 函数注册和 Python 执行器已在 _setup_draco_funcs 完成，
+        这里只负责代码生成器（需要 LLMClient）。
+        """
         self._code_runner = CodeRunner()
-        self._func_registry = get_global_func_registry()
-        self._func_registry.set_user_file(self._config.functions_file_resolved)
-
-        # 加载用户函数文件（不存在则跳过，不算错误）
-        try:
-            n = self._func_registry.load_user_file(self._config.functions_file_resolved)
-            if n > 0:
-                log.info("P4 加载 %d 个用户函数", n)
-        except DracoError as e:
-            log.warning("加载用户函数文件失败: %s", e)
-
-        # Python 通道执行器（共享 history + 事件）
-        self._py_executor = PythonChannelExecutor(
-            config=self._config,
-            history_store=self._history,
-            shell_runner=self._shell_runner_for_agent,
-        )
 
         # 代码生成器（复用 P3 LLMClient，若 AI 未启用则不可用）
         client = self._llm_client or get_global_client(self._config)
@@ -250,18 +279,21 @@ class OpenDracoCLI:
         log.info("P4 Agent 自动化已启用 (functions=%s)", self._config.functions_file)
 
     def _teardown_agent(self) -> None:
-        """卸载 P4 Agent 组件"""
-        reset_global_func_registry()
-        self._func_registry = None
-        self._py_executor = None
+        """卸载 P4 Agent 组件（代码生成器 + 用户函数）
+
+        注意：内置 Draco 函数和 Python 执行器是默认基础设施，不在此清理。
+        """
         self._code_generator = None
         self._code_runner = None
         self._agent_enabled = False
-        log.info("P4 Agent 自动化已禁用")
+        # 卸载用户函数（保留内置 Draco 函数）
+        if self._func_registry is not None:
+            self._func_registry.clear_user_functions()
+        log.info("P4 Agent 自动化已禁用（内置 Draco 函数保留）")
 
     async def _shell_runner_for_agent(self, cmd: str):
         """AgentContext.shell 的 runner — 调 ShellPipeline（含 P2 风控 + P3 AI）"""
-        return await self._pipeline.run(cmd, session_id=self._session_id)
+        return await self._pipeline.run(cmd, session_id=self._session_id, cwd=self._session_cwd)
 
     async def run(self) -> None:
         """启动 TUI 主循环"""
@@ -333,10 +365,10 @@ class OpenDracoCLI:
         while self._running:
             try:
                 if self._pt_available:
-                    text = await session.prompt_async(_get_prompt_text())
+                    text = await session.prompt_async(_get_prompt_text(self._session_cwd))
                 else:
                     # 回退到 input()
-                    text = input(_get_prompt_text())
+                    text = input(_get_prompt_text(self._session_cwd))
             except (EOFError, KeyboardInterrupt):
                 # Ctrl+D / Ctrl+C 退出
                 print()
@@ -387,7 +419,7 @@ class OpenDracoCLI:
         """走 shell 通道（P1-P3 管线）"""
         try:
             result = await self._pipeline.run(
-                text, session_id=self._session_id
+                text, session_id=self._session_id, cwd=self._session_cwd
             )
         except Exception as e:
             log.exception("pipeline crashed")
@@ -401,6 +433,10 @@ class OpenDracoCLI:
         if not result.success and result.error is not None:
             self._render_draco_error(result.error)
             return
+
+        # cd 等命令更新 session cwd（持久化，后续命令用新目录）
+        if result.new_cwd:
+            self._session_cwd = result.new_cwd
 
         # 渲染 stdout/stderr
         if result.stdout:
@@ -731,7 +767,7 @@ class OpenDracoCLI:
         new_cfg = DracoConfig()
         # 继承旧配置的非 AI 字段
         for f_name in (
-            "history_db_path", "mappings_dir", "aliases_file",
+            "history_db_path", "aliases_file",
             "stdout_summary_lines", "stderr_summary_lines", "exec_timeout",
             "max_alias_depth", "log_level", "windows_shell", "unix_shell",
             "security_rules_file", "auth_hash_file", "sandbox_writable_paths",
@@ -1104,6 +1140,14 @@ class OpenDracoCLI:
         self._agent_enabled = True
         self._config.agent_enabled = True
         self._setup_agent()
+        # 加载用户函数文件（内置 Draco 函数已在初始化时注册）
+        if self._func_registry is not None:
+            try:
+                n_user = self._func_registry.load_user_file(self._config.functions_file_resolved)
+                if n_user > 0:
+                    log.info("加载 %d 个用户函数", n_user)
+            except DracoError as e:
+                log.warning("加载用户函数文件失败: %s", e)
         n = len(self._func_registry.list()) if self._func_registry else 0
         print(f"✅ Agent 已启用 ({n} 个函数)")
         if n == 0:
@@ -1504,9 +1548,8 @@ class OpenDracoCLI:
         try:
             ir = parse(command)
             normalize(ir)
-            # 别名展开 + 平台映射（与真实管线一致，确保评估准确）
+            # 别名展开（与真实管线一致，确保评估准确）
             ir, _ = self._pipeline._expander.expand(ir)
-            self._pipeline._mapper.map(ir)
         except DracoError as e:
             self._render_draco_error(e)
             return

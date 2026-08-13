@@ -125,14 +125,13 @@ def test_alias_in_pipeline():
     assert out.nodes[1].name == "grep"
 
 
-def test_alias_expands_before_platform_map():
-    """验证决策 1b：别名展开产出抽象命令名 ls（尚未映射为 dir）。
-    展开后的 name 应该是 ls，不是 dir。"""
+def test_alias_expands_to_abstract_command():
+    """验证别名展开产出命令名 ls（透传原生 shell，不做平台映射）。
+    展开后的 name 应该是 ls，由原生 shell 执行。"""
     mgr = _FakeManager({"ll": "ls -la"})
     expander = AliasExpander(manager=mgr)
 
     ir = parse("ll")
     out, _ = expander.expand(ir)
-    # 关键断言：展开后是抽象名 ls，不是平台名 dir
+    # 关键断言：展开后是 ls（透传原生 shell）
     assert out.nodes[0].name == "ls"
-    assert out.nodes[0].name != "dir"

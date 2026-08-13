@@ -69,15 +69,15 @@ async def test_command_records_history(pipeline):
 
 
 @pytest.mark.asyncio
-async def test_alias_then_platform_map(pipeline):
-    """决策 1b 端到端：别名 ll=ls -la，在 Linux 上执行应展开为 ls -la"""
+async def test_alias_then_native_shell(pipeline):
+    """别名 ll=ls -la，展开后透传原生 shell 执行"""
     pipe, history, aliases, *_ = pipeline
     aliases.add("ll", "ls -la")
 
     result = await pipe.run("ll", session_id="s1")
     assert result.success
     assert result.alias_used == "ll"
-    # mapped_command 应含 ls（Linux 上 ls 无映射，透传）
+    # mapped_command 应含 ls（透传原生 shell，不映射）
     assert "ls" in result.mapped_command
 
 
@@ -228,3 +228,75 @@ async def test_multi_command_alias_with_operators(pipeline):
     assert "a" in result.stdout
     assert "b" in result.stdout
     assert "&&" in result.mapped_command
+
+
+# ===== Draco 函数路由测试 =====
+
+
+@pytest.mark.asyncio
+async def test_draco_func_routes_to_python(pipeline, tmp_path):
+    """命中 Draco 函数走 Python 通道，不走原生 shell"""
+    pipe, history, aliases, hooks, cfg = pipeline
+
+    # 注册一个测试用的 Draco 函数
+    from opendracocli.agent.function_registry import FunctionRegistry
+    from opendracocli.agent.python_executor import PythonChannelExecutor
+
+    registry = FunctionRegistry()
+
+    def myecho(ctx, text: str = "default"):
+        """测试函数"""
+        print(f"ECHO:{text}")
+        return text
+
+    registry.register("myecho", myecho, builtin=True)
+    py_exec = PythonChannelExecutor(config=cfg, history_store=history)
+    pipe.set_function_registry(registry)
+    pipe.set_python_executor(py_exec)
+
+    result = await pipe.run("myecho text=hello", session_id="s1")
+    assert result.success
+    assert result.exit_code == 0
+    assert "ECHO:hello" in result.stdout
+    assert "myecho" in result.mapped_command
+
+
+@pytest.mark.asyncio
+async def test_draco_func_ffind(pipeline, tmp_path):
+    """内置 ffind 函数端到端：跨平台文件搜索"""
+    pipe, history, aliases, hooks, cfg = pipeline
+
+    from opendracocli.draco_funcs.registry import register_builtins
+    from opendracocli.agent.function_registry import FunctionRegistry
+    from opendracocli.agent.python_executor import PythonChannelExecutor
+
+    registry = FunctionRegistry()
+    register_builtins(registry)
+    py_exec = PythonChannelExecutor(config=cfg, history_store=history)
+    pipe.set_function_registry(registry)
+    pipe.set_python_executor(py_exec)
+
+    # 创建测试文件
+    (tmp_path / "a.py").write_text("x")
+    (tmp_path / "b.txt").write_text("y")
+
+    result = await pipe.run(f"ffind *.py path={tmp_path}", session_id="s1")
+    assert result.success
+    assert "a.py" in result.stdout
+    assert "b.txt" not in result.stdout
+
+
+@pytest.mark.asyncio
+async def test_unmapped_command_passthrough(pipeline):
+    """未命中 Draco 函数的命令透传原生 shell"""
+    pipe, *_ = pipeline
+    # 不注入 function_registry，或注入空 registry
+    from opendracocli.agent.function_registry import FunctionRegistry
+
+    registry = FunctionRegistry()  # 空 registry
+    pipe.set_function_registry(registry)
+    # 不注入 python_executor → 即使命中也走 shell（但空 registry 不会命中）
+
+    result = await pipe.run("echo passthrough", session_id="s1")
+    assert result.success
+    assert "passthrough" in result.stdout
