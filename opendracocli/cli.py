@@ -1582,12 +1582,41 @@ def main() -> None:
     """入口函数（pyproject scripts 指向）
 
     支持参数:
-      --setup-auth   设置/重置身份验证密码（用于 critical 级操作）
+      --setup-auth          设置/重置身份验证密码（用于 critical 级操作）
+      --no-startup          跳过启动界面 (P5)
+      --renderer <engine>   指定渲染引擎: textual | simple (P5)
+      --theme <name>        指定主题 (P5)
+      --template <name>     指定启动模板 (P5)
+
+    P5: TTY 环境默认 textual，非 TTY 自动降级 simple (OpenDracoCLI prompt_toolkit 循环)。
     """
     args = sys.argv[1:]
     if "--setup-auth" in args:
         _setup_auth_interactive()
         return
+
+    # P5: 解析 flags 并覆盖配置
+    cfg = get_global_config()
+    skip_startup = "--no-startup" in args
+    for i, a in enumerate(args):
+        if a == "--renderer" and i + 1 < len(args):
+            cfg.tui_engine = args[i + 1]
+        elif a == "--theme" and i + 1 < len(args):
+            cfg.theme = args[i + 1]
+        elif a == "--template" and i + 1 < len(args):
+            cfg.startup_template = args[i + 1]
+
+    # textual 引擎：TTY 且未强制 simple 时启用
+    if cfg.effective_tui_engine == "textual":
+        try:
+            from .tui.app import run_textual
+
+            run_textual(cfg, skip_startup=skip_startup)
+            return
+        except Exception:
+            # textual 不可用或崩溃 → 降级到 simple (OpenDracoCLI prompt_toolkit 循环)
+            log.exception("textual TUI 启动失败，降级到 simple 引擎")
+
     app = OpenDracoCLI()
     try:
         asyncio.run(app.run())

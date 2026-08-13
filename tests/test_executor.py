@@ -84,3 +84,41 @@ async def test_executor_records_duration():
     result = await executor.execute(ir, timeout=10)
     assert result.duration_ms >= 0
     assert result.mapped_command  # 非空
+
+
+@pytest.mark.asyncio
+async def test_executor_cancel_safe_terminate():
+    """Ctrl+C 取消时走 _safe_terminate，不抛 'exit status already read' 警告"""
+    from opendracocli.errors import DracoError, ERR_EXEC_CANCELLED
+
+    executor = SubprocessExecutor()
+    ir = CommandIR(nodes=[CommandNode(name="sleep", args=["5"])])
+
+    task = asyncio.ensure_future(executor.execute(ir, timeout=30))
+    await asyncio.sleep(0.3)  # 让子进程起来
+    task.cancel()
+
+    with pytest.raises(DracoError) as exc:
+        await task
+    assert exc.value.code == ERR_EXEC_CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_safe_terminate_idempotent_on_dead_process():
+    """_safe_terminate 对已退出进程不重复发信号"""
+    from opendracocli.shell.executor import _safe_terminate
+
+    executor = SubprocessExecutor()
+    ir = CommandIR(nodes=[CommandNode(name="true")])
+    # 先正常跑完，proc 已退出
+    await executor.execute(ir, timeout=5)
+    # 构造一个已退出的伪 proc 不可行，改用真实进程跑完后立即调用
+    proc = await asyncio.create_subprocess_exec(
+        "true",
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    await proc.wait()
+    # 进程已退出 (returncode 已知)，_safe_terminate 不应抛异常
+    await _safe_terminate(proc)
+    assert proc.returncode == 0

@@ -166,8 +166,7 @@ class SubprocessExecutor:
         try:
             stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=to)
         except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+            await _safe_terminate(proc)
             raise make_error(
                 ERR_EXEC_TIMEOUT,
                 detail={"command": command_str, "timeout": to},
@@ -175,8 +174,9 @@ class SubprocessExecutor:
                 timeout=to,
             )
         except asyncio.CancelledError:
-            proc.kill()
-            await proc.wait()
+            # 用户 Ctrl+C：先 ensure 不对已退出进程重复发信号，避免
+            # "child process pid … exit status already read" 警告噪音
+            await _safe_terminate(proc)
             raise make_error(
                 ERR_EXEC_CANCELLED,
                 detail={"command": command_str},
@@ -192,3 +192,21 @@ class SubprocessExecutor:
             mapped_command=command_str,
             duration_ms=duration_ms,
         )
+
+
+async def _safe_terminate(proc: asyncio.subprocess.Process) -> None:
+    """安全终止子进程，吞掉重复读 exit status 的告警。
+
+    Ctrl+C / 超时时调用。若进程已退出（returncode 已知），不再发 kill 信号，
+    避免触发 "child process pid … exit status already read" 警告噪音。
+    """
+    if proc.returncode is None:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            # 进程刚好在我们检查后退出
+            pass
+    try:
+        await proc.wait()
+    except (ProcessLookupError, asyncio.CancelledError):
+        pass

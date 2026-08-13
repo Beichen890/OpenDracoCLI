@@ -71,6 +71,20 @@ class DracoConfig:
     agent_auto_confirm_generated: bool = False  # AI 生成代码默认需确认
     agent_max_gen_tokens: int = 1024
 
+    # P5 打磨（界面细化）— 全部有默认值，向后兼容 P1-P4
+    tui_engine: str = "textual"              # 'textual' | 'simple' (非 TTY 自动降级)
+    theme: str = "draco"                     # 默认主题名
+    custom_themes_dir: str = "~/.opendracocli/themes"
+    startup_config: str = "~/.opendracocli/startup.toml"
+    startup_enabled: bool = True             # 启动界面总开关
+    startup_template: str = "draco"          # 启动模板
+    startup_animation: str = "spinner"       # 'spinner'|'progress'|'typewriter'|'none'
+    startup_duration_ms: int = 1500
+    startup_skip_on_key: bool = True
+    startup_custom_templates_dir: str = "~/.opendracocli/startup_templates"
+    keymap_file: str = "~/.opendracocli/keymap.toml"
+    fallback_simple_in_non_tty: bool = True  # 非 TTY 自动降级 SimpleRenderer
+
     def __post_init__(self) -> None:
         # 环境变量覆盖
         for f in fields(self):
@@ -154,6 +168,39 @@ class DracoConfig:
     def functions_file_resolved(self) -> Path:
         """P4 用户函数文件路径（展开 ~ 和环境变量）"""
         return Path(_expand(self.functions_file))
+
+    # === P5 resolved ===
+    @property
+    def custom_themes_dir_resolved(self) -> Path:
+        return Path(_expand(self.custom_themes_dir))
+
+    @property
+    def startup_config_resolved(self) -> Path:
+        return Path(_expand(self.startup_config))
+
+    @property
+    def startup_custom_templates_dir_resolved(self) -> Path:
+        return Path(_expand(self.startup_custom_templates_dir))
+
+    @property
+    def keymap_file_resolved(self) -> Path:
+        return Path(_expand(self.keymap_file))
+
+    @property
+    def is_tty(self) -> bool:
+        """当前 stdout 是否为 TTY（决定是否降级 SimpleRenderer）"""
+        import sys
+
+        return bool(sys.stdout.isatty())
+
+    @property
+    def effective_tui_engine(self) -> str:
+        """实际使用的 TUI 引擎：非 TTY 且开启降级时返回 'simple'"""
+        if self.tui_engine == "simple":
+            return "simple"
+        if self.fallback_simple_in_non_tty and not self.is_tty:
+            return "simple"
+        return "textual"
 
     @property
     def ai_api_key_effective(self) -> str:

@@ -9,5 +9,12 @@
   "md": "mkdir",
   "cls": "clear",
   "findstr": "grep",
-  "help": "man"
+  "help": "man",
+  "ipconfig": "ifconfig",
+  "tasklist": "ps",
+  "taskkill": "kill",
+  "ping": "ping",
+  "tracert": "traceroute",
+  "netstat": "netstat",
+  "nslookup": "nslookup"
 }
