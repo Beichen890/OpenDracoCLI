@@ -188,11 +188,22 @@ class FunctionRegistry:
         if self._user_file is None:
             log.warning("reload called but no user file set")
             return 0
-        # 清空用户函数（保留 builtin）
+        self.clear_user_functions()
+        return self.load_user_file(self._user_file)
+
+    def clear_user_functions(self) -> int:
+        """清空用户函数（保留 builtin）
+
+        Returns:
+            被清除的用户函数数量
+        """
+        user_names = [k for k, v in self._functions.items() if not v.is_builtin]
         self._functions = {
             k: v for k, v in self._functions.items() if v.is_builtin
         }
-        return self.load_user_file(self._user_file)
+        if user_names:
+            log.info("cleared %d user functions", len(user_names))
+        return len(user_names)
 
     def get(self, name: str) -> Optional[RegisteredFunction]:
         """按名获取函数"""
