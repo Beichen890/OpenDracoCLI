@@ -43,7 +43,7 @@ async def test_write_to_non_whitelisted_path(sandbox):
     )
     result = await sandbox.execute(ir, timeout=10)
     assert result.exit_code == -1
-    assert "sandbox.violation" in result.stderr or "draco.sandbox" in result.stderr
+    assert "沙箱拦截" in result.stderr
 
 
 @pytest.mark.asyncio
@@ -86,7 +86,7 @@ async def test_rm_non_whitelisted_path_blocked(sandbox):
     ir = CommandIR(nodes=[CommandNode(name="rm", args=["/etc/important.conf"])])
     result = await sandbox.execute(ir, timeout=10)
     assert result.exit_code == -1
-    assert "draco.sandbox" in result.stderr
+    assert "沙箱拦截" in result.stderr
 
 
 @pytest.mark.asyncio

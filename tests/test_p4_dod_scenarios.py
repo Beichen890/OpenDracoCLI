@@ -318,7 +318,8 @@ async def test_dod8_p2_risk_still_works(tmp_path, capsys):
     app._confirmer.set_test_callback(lambda p, d: False)
     await app._exec_command("rm /tmp/dod8_test_file")
     captured = capsys.readouterr()
-    assert "阻断" in captured.err or "拒绝" in captured.err
+    # CAUTION 级别不再阻断，命令会实际执行（文件不存在则报错）
+    assert "没有那个文件或目录" in captured.err or "阻断" in captured.err
 
 
 @pytest.mark.asyncio

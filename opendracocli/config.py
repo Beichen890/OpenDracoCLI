@@ -28,7 +28,7 @@ class DracoConfig:
     aliases_file: str = "~/.opendracocli/aliases.json"
     stdout_summary_lines: int = 20
     stderr_summary_lines: int = 20
-    exec_timeout: float = 3600.0
+    exec_timeout: float = 60.0
     max_alias_depth: int = 3
     log_level: str = "INFO"
     # Windows 用 cmd /c, Unix 用 bash -c（不兼容 PowerShell）
@@ -51,7 +51,7 @@ class DracoConfig:
     ai_model: str = "deepseek-chat"
     ai_max_tokens: int = 512
     ai_temperature: float = 0.4
-    ai_timeout: float = 30.0
+    ai_timeout: float = 15.0
     ai_cooldown: float = 1.0
     ai_auto_correct: bool = True
     ai_roles_dir: str = "~/.opendracocli/roles"
@@ -78,7 +78,7 @@ class DracoConfig:
     startup_enabled: bool = True             # 启动界面总开关
     startup_template: str = "draco"          # 启动模板
     startup_animation: str = "spinner"       # 'spinner'|'progress'|'typewriter'|'none'
-    startup_duration_ms: int = 1500
+    startup_duration_ms: int = 500
     startup_skip_on_key: bool = True
     startup_custom_templates_dir: str = "~/.opendracocli/startup_templates"
     keymap_file: str = "~/.opendracocli/keymap.toml"

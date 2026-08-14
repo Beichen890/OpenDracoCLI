@@ -63,8 +63,7 @@ class SandboxExecutor:
         for p in self._extract_write_paths(ir, cwd):
             if not self._is_writable(p):
                 return (
-                    f"draco.sandbox.violation: 写入路径 {p} 不在白名单内 "
-                    f"(白名单: {self._writable})"
+                    f"沙箱拦截: 写入路径 {p} 不在允许范围内"
                 )
         return None
 
@@ -86,22 +85,41 @@ class SandboxExecutor:
                 paths.append(self._resolve_path(r.target, base))
 
         # 2. 危险命令的路径参数
-        write_cmds = {"rm", "rmdir", "del", "rd", "mv", "move", "cp", "copy", "truncate", "chmod", "chown", "dd"}
+        # 全量写命令（含可绕过沙箱的命令）
+        write_cmds = {
+            "rm", "rmdir", "del", "rd", "mv", "move", "cp", "copy",
+            "truncate", "chmod", "chown", "dd",
+            "mkdir", "touch", "tee", "install", "tar", "unzip", "zip",
+            "sed", "awk", "perl",
+        }
+        # mv/cp 只需检查目标路径（最后一个参数），源路径只需读
+        dest_only_cmds = {"mv", "move", "cp", "copy", "install"}
         for node in ir.nodes:
-            if node.name.lower() in write_cmds:
-                for arg in node.args:
-                    # 跳过选项参数（- 开头，如 -rf / -f）
-                    if arg.startswith("-"):
-                        continue
-                    # 跳过 Windows 选项（/ 开头且短，如 /s /y /f）
-                    # 注意: Unix 绝对路径也以 / 开头，但路径通常较长或含多级
-                    if arg.startswith("/") and len(arg) <= 3:
-                        continue
-                    # 跳过明显非路径的纯数字（如 PID 1234）
+            name_lower = node.name.lower()
+            if name_lower in write_cmds:
+                args = [a for a in node.args if not a.startswith("-")]
+                # mv/cp: 只检查最后一个参数（目标）
+                if name_lower in dest_only_cmds and len(args) >= 2:
+                    check_args = [args[-1]]
+                else:
+                    check_args = args
+                for arg in check_args:
                     if arg.isdigit():
                         continue
-                    # 其余视为路径候选，检查
                     paths.append(self._resolve_path(arg, base))
+            # sudo/doas/pkexec + 写命令
+            elif name_lower in ("sudo", "doas", "pkexec", "su"):
+                for arg in node.args:
+                    if arg.lower() in write_cmds:
+                        # sudo 后面的写命令，检查其后续参数
+                        idx = node.args.index(arg)
+                        sub_args = node.args[idx + 1:]
+                        check_args = [a for a in sub_args if not a.startswith("-")]
+                        if arg.lower() in dest_only_cmds and len(check_args) >= 2:
+                            check_args = [check_args[-1]]
+                        for a in check_args:
+                            if not a.isdigit():
+                                paths.append(self._resolve_path(a, base))
 
         return paths
 

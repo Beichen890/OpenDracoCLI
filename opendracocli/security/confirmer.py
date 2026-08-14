@@ -65,9 +65,14 @@ class Confirmer:
                 raw = await session.prompt_async(full_prompt)
         except ImportError:
             # 回退到 input（同步，但 asyncio 环境下勉强可用）
-            raw = input(full_prompt)
+            try:
+                raw = input(full_prompt)
+            except (EOFError, KeyboardInterrupt):
+                return False
+        except (EOFError, KeyboardInterrupt):
+            return False
 
         raw = raw.strip().lower()
         if not raw:
             return default
-        return raw in ("y", "yes")
+        return raw in ("y", "yes", "ok", "sure", "是", "确认", "好")

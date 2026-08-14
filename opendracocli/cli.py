@@ -378,15 +378,24 @@ class OpenDracoCLI:
             if not text:
                 continue
 
-            # slash 命令
+            # slash 命令（排除绝对路径，如 /usr/bin/ls）
             if text.startswith("/"):
-                handled = await self._handle_slash(text)
-                if handled == "quit":
-                    break
-                continue
+                first = text.split()[0]
+                # 只有一个 / 的视为 slash 命令（如 /help, /ai on）
+                # 多个 / 的视为路径（如 /usr/bin/ls, /etc/passwd）
+                if "/" not in first[1:]:
+                    handled = await self._handle_slash(text)
+                    if handled == "quit":
+                        break
+                    continue
 
             # 执行命令
-            await self._exec_command(text)
+            try:
+                await self._exec_command(text)
+            except KeyboardInterrupt:
+                print("\n(中断)")
+            except BrokenPipeError:
+                pass
 
         self._running = False
         get_global_bus().publish(
@@ -488,7 +497,7 @@ class OpenDracoCLI:
                 reg_func,
                 bound_args,
                 bound_kwargs,
-                cwd=os.getcwd(),
+                cwd=self._session_cwd,
                 session_id=self._session_id,
             )
         except Exception as e:
@@ -536,7 +545,7 @@ class OpenDracoCLI:
                     print(f"→ {rv!r}")
 
     async def _maybe_render_correction(self) -> None:
-        """渲染并应用 AI 纠错建议"""
+        """渲染 AI 纠错建议（不阻塞，仅提示）"""
         if self._correction_hook is None:
             return
         pending = self._correction_hook.pop_pending_correction()
@@ -548,26 +557,12 @@ class OpenDracoCLI:
 
         if getattr(self, "_rich", False):
             from rich.console import Console
-            from rich.panel import Panel
 
             Console().print(
-                Panel(
-                    f"[cyan]建议命令:[/]\n[green]{suggested}[/]",
-                    title="AI 纠错建议",
-                    border_style="cyan",
-                )
+                f"[dim cyan]💡 纠错建议: {suggested}（输入 ↑ 可快速重试）[/]"
             )
         else:
-            print(f"--- AI 纠错建议 ---")
-            print(f"  {suggested}")
-            print(f"-------------------")
-
-        # 询问是否应用
-        ok = await self._confirmer.ask_yes("应用建议命令？", default=False)
-        if ok:
-            # 走 shell 通道（含 P2 风控，不绕过）
-            print(f"→ 执行: {suggested}")
-            await self._exec_shell(suggested)
+            print(f"💡 纠错建议: {suggested}")
 
     def _maybe_render_suggestions(self) -> None:
         """渲染感知主动建议"""
@@ -599,6 +594,9 @@ class OpenDracoCLI:
             return "quit"
         if cmd in ("/help", "/h", "/?"):
             self._print_help()
+            return None
+        if cmd in ("/clear", "/cls"):
+            os.system("clear" if os.name != "nt" else "cls")
             return None
         if cmd == "/alias":
             self._handle_alias_cmd(arg)
@@ -648,6 +646,7 @@ class OpenDracoCLI:
         print("  /agent run <name> [args]    显式调用函数")
         print("  /agent templates            列出可用模板")
         print("  /agent apply <template>     应用模板到 functions.py")
+        print("  /clear                      清屏")
         print("  /help                       显示此帮助")
         print("  /quit                       退出")
 
@@ -831,11 +830,15 @@ class OpenDracoCLI:
             print("思考中...")
 
         chunks: list[str] = []
+        _flush_counter = 0
 
         def on_chunk(ch: str) -> None:
             chunks.append(ch)
             sys.stdout.write(ch)
-            sys.stdout.flush()
+            nonlocal _flush_counter
+            _flush_counter += 1
+            if _flush_counter % 10 == 0:
+                sys.stdout.flush()
 
         resp = await self._llm_client.chat(
             [
@@ -849,8 +852,11 @@ class OpenDracoCLI:
             print()
             self._render_error(f"AI 调用失败: {resp.error}")
             return
+        # 确保最后 flush
+        sys.stdout.flush()
         # 流式已打印 content，补一个换行
-        if not chunks or not chunks[-1].endswith("\n"):
+        full = "".join(chunks)
+        if not full.endswith("\n"):
             print()
 
     async def _ai_correct_manual(self, command: str) -> None:
@@ -1326,7 +1332,7 @@ class OpenDracoCLI:
         # 执行（无参数）
         try:
             result: AgentExecResult = await self._py_executor.execute(
-                rf, [], {}, cwd=os.getcwd(), session_id=self._session_id
+                rf, [], {}, cwd=self._session_cwd, session_id=self._session_id
             )
         except Exception as e:
             log.exception("generated function exec crashed")
@@ -1659,6 +1665,7 @@ def main() -> None:
         except Exception:
             # textual 不可用或崩溃 → 降级到 simple (OpenDracoCLI prompt_toolkit 循环)
             log.exception("textual TUI 启动失败，降级到 simple 引擎")
+            print("⚠️  Textual TUI 不可用，已降级到简单模式。")
 
     app = OpenDracoCLI()
     try:
@@ -1682,11 +1689,12 @@ def _setup_auth_interactive() -> None:
     print()
 
     try:
-        pw1 = input("请输入新密码: ")
+        import getpass
+        pw1 = getpass.getpass("请输入新密码: ")
         if not pw1:
             print("密码不能为空，已取消。")
             return
-        pw2 = input("请再次输入以确认: ")
+        pw2 = getpass.getpass("请再次输入以确认: ")
     except (EOFError, KeyboardInterrupt):
         print("\n已取消。")
         return
