@@ -71,13 +71,8 @@ class RiskAssessmentHook(PreExecHook):
         prompt = self._build_prompt(assessment, ctx.raw_input)
 
         if assessment.level == RiskLevel.CAUTION:
-            ok = await self._confirmer.ask_yes(prompt, default=False)
-            if not ok:
-                self._publish_block(ctx, assessment, "用户拒绝")
-                return ExecDecision.BLOCK, BlockResult(
-                    reason=f"用户拒绝: {assessment.reason}",
-                    code=ERR_RISK_DENIED,
-                )
+            # CAUTION 仅警告，不阻塞
+            log.warning("caution: %s — %s", ctx.raw_input[:80], assessment.reason)
             return ExecDecision.CONTINUE, None
 
         if assessment.level == RiskLevel.DANGER:
@@ -95,35 +90,30 @@ class RiskAssessmentHook(PreExecHook):
         # 根据配置决定是否需要身份验证
         if self._config.require_auth_for == "critical":
             if not self._authenticator.is_configured():
-                self._publish_block(ctx, assessment, "未配置密码")
-                return ExecDecision.BLOCK, BlockResult(
-                    reason="需先设置密码 (opendracocli --setup-auth)",
-                    code=ERR_AUTH_NOT_CONFIGURED,
+                # 未配置密码：警告但放行（避免阻断所有 critical 操作）
+                log.warning(
+                    "critical 操作未配置密码，跳过身份验证: %s",
+                    ctx.raw_input[:80],
                 )
-            get_global_bus().publish(
-                Event(
-                    type=EVT_AUTH_REQUIRED,
-                    payload={
-                        "raw_input": ctx.raw_input,
-                        "reason": assessment.reason,
-                    },
+            else:
+                get_global_bus().publish(
+                    Event(
+                        type=EVT_AUTH_REQUIRED,
+                        payload={
+                            "raw_input": ctx.raw_input,
+                            "reason": assessment.reason,
+                        },
+                    )
                 )
-            )
-            authed = await self._authenticator.verify()
-            if not authed:
-                self._publish_block(ctx, assessment, "身份验证失败")
-                return ExecDecision.BLOCK, BlockResult(
-                    reason="身份验证失败",
-                    code=ERR_AUTH_FAILED,
-                )
+                authed = await self._authenticator.verify()
+                if not authed:
+                    self._publish_block(ctx, assessment, "身份验证失败")
+                    return ExecDecision.BLOCK, BlockResult(
+                        reason="身份验证失败",
+                        code=ERR_AUTH_FAILED,
+                    )
 
-        ok = await self._confirmer.ask_yes(prompt, default=False)
-        if not ok:
-            self._publish_block(ctx, assessment, "用户拒绝")
-            return ExecDecision.BLOCK, BlockResult(
-                reason=f"用户拒绝: {assessment.reason}",
-                code=ERR_RISK_DENIED,
-            )
+        # CRITICAL 验证通过后直接执行（密码已证明身份，不再冗余确认）
         ctx.metadata["use_sandbox"] = True
         return ExecDecision.CONTINUE, None
 

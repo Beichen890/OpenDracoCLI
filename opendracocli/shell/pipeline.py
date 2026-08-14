@@ -213,9 +213,10 @@ class ShellPipeline:
             violation = self._sandbox_executor.check(ctx.ir, effective_cwd)
             if violation is not None:
                 log.warning(violation)
-                # 沙箱拦截：管线正常处理（success=True），命令未执行（exit_code=-1）
-                # blocked 仅表示风控钩子阻断，沙箱拦截不算 blocked
-                result.success = True
+                # 沙箱拦截：标记为 blocked，清晰提示用户
+                result.success = False
+                result.blocked = True
+                result.block_reason = violation
                 result.exit_code = -1
                 result.stderr = violation
                 result.mapped_command = serialize_ir(ctx.ir)
