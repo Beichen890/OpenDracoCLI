@@ -9,7 +9,11 @@
 
 use pyo3::prelude::*;
 
+mod disk_cmds;
 mod fs_cmds;
+mod path_cmds;
+mod sys_cmds;
+mod text_cmds;
 
 /// 命令执行结果（映射到 Python 的 opendracocli._native.CommandResult）
 #[pyclass(get_all)]
@@ -38,6 +42,7 @@ struct CommandResult {
 fn execute(cmd: &str, args: Vec<String>, cwd: &str, stdin: Option<String>) -> CommandResult {
     let stdin_ref = stdin.as_deref();
     let out = match cmd {
+        // --- 文件系统 ---
         "ls" => fs_cmds::ls(&args, cwd),
         "cd" => fs_cmds::cd(&args, cwd),
         "pwd" => fs_cmds::pwd(&args, cwd),
@@ -54,6 +59,31 @@ fn execute(cmd: &str, args: Vec<String>, cwd: &str, stdin: Option<String>) -> Co
         "ln" => fs_cmds::ln(&args, cwd),
         "echo" => fs_cmds::echo(&args, cwd, stdin_ref),
         "wc" => fs_cmds::wc(&args, cwd, stdin_ref),
+        // --- 系统信息 ---
+        "date" => sys_cmds::date(&args, cwd),
+        "whoami" => sys_cmds::whoami(&args, cwd),
+        "hostname" => sys_cmds::hostname(&args, cwd),
+        "uname" => sys_cmds::uname(&args, cwd),
+        "env" => sys_cmds::env_cmd(&args, cwd),
+        "printenv" => sys_cmds::printenv(&args, cwd),
+        "true" => sys_cmds::true_cmd(&args, cwd),
+        "false" => sys_cmds::false_cmd(&args, cwd),
+        "which" => sys_cmds::which(&args, cwd),
+        "clear" => sys_cmds::clear(&args, cwd),
+        // --- 路径操作 ---
+        "dirname" => path_cmds::dirname(&args, cwd),
+        "basename" => path_cmds::basename(&args, cwd),
+        "realpath" => path_cmds::realpath(&args, cwd),
+        "readlink" => path_cmds::readlink(&args, cwd),
+        // --- 文本处理 ---
+        "tr" => text_cmds::tr(&args, cwd, stdin_ref),
+        "sort" => text_cmds::sort(&args, cwd, stdin_ref),
+        "uniq" => text_cmds::uniq(&args, cwd, stdin_ref),
+        "tee" => text_cmds::tee(&args, cwd, stdin_ref),
+        "seq" => text_cmds::seq(&args, cwd),
+        "test" => text_cmds::test_cmd(&args, cwd),
+        // --- 磁盘 ---
+        "du" => disk_cmds::du(&args, cwd),
         _ => {
             return CommandResult {
                 exit_code: 127,
@@ -75,8 +105,18 @@ fn execute(cmd: &str, args: Vec<String>, cwd: &str, stdin: Option<String>) -> Co
 #[pyfunction]
 fn supported_commands() -> Vec<String> {
     vec![
+        // 文件系统
         "ls", "cd", "pwd", "cat", "head", "tail", "cp", "mv", "rm",
         "mkdir", "rmdir", "touch", "stat", "ln", "echo", "wc",
+        // 系统信息
+        "date", "whoami", "hostname", "uname", "env", "printenv",
+        "true", "false", "which", "clear",
+        // 路径操作
+        "dirname", "basename", "realpath", "readlink",
+        // 文本处理
+        "tr", "sort", "uniq", "tee", "seq", "test",
+        // 磁盘
+        "du",
     ]
     .into_iter()
     .map(String::from)

@@ -23,19 +23,19 @@ pub struct CmdOut {
 }
 
 impl CmdOut {
-    fn ok(stdout: String) -> Self {
+    pub fn ok(stdout: String) -> Self {
         Self { exit_code: 0, stdout, stderr: String::new(), new_cwd: None }
     }
-    fn ok_stream() -> Self {
+    pub fn ok_stream() -> Self {
         Self::ok(String::new())
     }
-    fn err(msg: String) -> Self {
+    pub fn err(msg: String) -> Self {
         Self { exit_code: 1, stdout: String::new(), stderr: msg, new_cwd: None }
     }
 }
 
 /// 解析相对路径为绝对路径（基于 cwd）
-fn resolve(cwd: &str, p: &str) -> PathBuf {
+pub fn resolve(cwd: &str, p: &str) -> PathBuf {
     let path = Path::new(p);
     if path.is_absolute() {
         path.to_path_buf()
@@ -45,7 +45,7 @@ fn resolve(cwd: &str, p: &str) -> PathBuf {
 }
 
 /// 人类可读大小（1024 进制）
-fn human_size(n: u64) -> String {
+pub fn human_size(n: u64) -> String {
     const UNITS: &[&str] = &["B", "K", "M", "G", "T", "P"];
     if n < 1024 {
         return format!("{}", n);
@@ -60,7 +60,7 @@ fn human_size(n: u64) -> String {
 }
 
 /// 拆分 flags 与位置参数：- 开头的归 flags，其余归 positional
-fn split_args(args: &[String]) -> (Vec<char>, Vec<String>) {
+pub fn split_args(args: &[String]) -> (Vec<char>, Vec<String>) {
     let mut flags = Vec::new();
     let mut pos = Vec::new();
     for a in args {
