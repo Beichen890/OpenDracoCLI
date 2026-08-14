@@ -379,12 +379,11 @@ class OpenDracoCLI:
                 continue
 
             # slash 命令（排除绝对路径，如 /usr/bin/ls）
-            if text.startswith("/") and not text.startswith("//") and not os.path.exists(text.split()[0]):
-                # 进一步检查：第一个 token 是否是已知的 slash 命令
-                first_token = text.split()[0] if text.split() else ""
-                known_slash = {"/quit", "/exit", "/q", "/help", "/h", "/?",
-                               "/alias", "/aliases", "/history", "/risk", "/ai", "/agent", "/clear"}
-                if first_token in known_slash or first_token.startswith("/ai ") or first_token.startswith("/agent ") or first_token.startswith("/alias ") or first_token.startswith("/risk ") or first_token.startswith("/history "):
+            if text.startswith("/"):
+                first = text.split()[0]
+                # 只有一个 / 的视为 slash 命令（如 /help, /ai on）
+                # 多个 / 的视为路径（如 /usr/bin/ls, /etc/passwd）
+                if "/" not in first[1:]:
                     handled = await self._handle_slash(text)
                     if handled == "quit":
                         break
