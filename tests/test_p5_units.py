@@ -340,7 +340,7 @@ def test_keymap_keys_for_action():
 
 def test_config_p5_defaults():
     cfg = DracoConfig()
-    assert cfg.tui_engine == "textual"
+    assert cfg.tui_engine == "simple"  # 默认交互式 CLI, 不用 TUI
     assert cfg.theme == "draco"
     assert cfg.startup_enabled is True
     assert cfg.startup_template == "draco"

@@ -54,13 +54,14 @@ log = get_logger("cli")
 
 
 def _get_prompt_text(cwd: Optional[str] = None) -> str:
-    """生成提示符（含 cwd）"""
+    """生成提示符 (DracoHub 风格: 青色 >> + cwd)"""
     cwd = cwd or os.getcwd()
     # 缩短 home 路径
     home = os.path.expanduser("~")
     if cwd.startswith(home):
         cwd = "~" + cwd[len(home):]
-    return f"draco {cwd} ❯ "
+    # 青色加粗 >> + dim cwd 提示
+    return f"\033[1;36m>>\033[0m \033[2m{cwd}\033[0m "
 
 
 class OpenDracoCLI:
@@ -321,27 +322,30 @@ class OpenDracoCLI:
                 if self._agent_enabled
                 else "[dim]✗ off[/]"
             )
-            console.print(
-                Panel.fit(
-                    "[bold cyan]◈ OpenDracoCLI[/] [dim]— AI 时代的智能终端[/]\n"
-                    f"  [dim]平台[/] {self._config.current_platform}  "
-                    f"[dim]会话[/] {self._session_id[:8]}  "
-                    f"[dim]AI[/] {ai_status}  "
-                    f"[dim]Agent[/] {agent_status}\n"
-                    "  [dim]输入[/] [green]/help[/] [dim]查看命令 ·[/] "
-                    "[green]/ai[/] [dim]AI ·[/] "
-                    "[green]/agent[/] [dim]Agent ·[/] "
-                    "[green]/quit[/] [dim]退出[/]",
-                    border_style="cyan",
-                    title="[bold cyan]Draco[/]",
-                    title_align="left",
-                    padding=(1, 2),
-                )
+            # 用 DracoHub 风格的彩色 Block Logo 横幅
+            from .banner import render_banner
+            try:
+                from . import __version__ as _ver
+            except ImportError:
+                _ver = "0.1.0"
+            banner = render_banner(
+                version=_ver,
+                platform=self._config.current_platform,
+                session_id=self._session_id,
+                ai_status=(
+                    f"✓ on ({self._config.ai_model})"
+                    if self._ai_enabled else "✗ off"
+                ),
+                agent_status=(
+                    f"✓ on ({len(self._func_registry.list()) if self._func_registry else 0} funcs)"
+                    if self._agent_enabled else "✗ off"
+                ),
             )
+            print(banner, end="")
             self._rich = True
         except ImportError:
             self._rich = False
-            print("OpenDracoCLI (P4) — /help for commands, /ai for AI, /agent for Agent, /quit to exit")
+            print("OpenDracoCLI — /help for commands, /ai for AI, /agent for Agent, /quit to exit")
 
         # 历史 tail 提示
         try:

@@ -71,7 +71,7 @@ class DracoConfig:
     agent_max_gen_tokens: int = 1024
 
     # P5 打磨（界面细化）— 全部有默认值，向后兼容 P1-P4
-    tui_engine: str = "textual"              # 'textual' | 'simple' (非 TTY 自动降级)
+    tui_engine: str = "simple"               # 'textual' | 'simple' (默认交互式 CLI, 不用 TUI)
     theme: str = "draco"                     # 默认主题名
     custom_themes_dir: str = "~/.opendracocli/themes"
     startup_config: str = "~/.opendracocli/startup.toml"
