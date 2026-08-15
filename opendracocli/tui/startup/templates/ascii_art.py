@@ -1,6 +1,6 @@
 """内置模板: ascii_art
 
-内置一段固定的 Draco 龙 ASCII art (~10 行, 用 /\\ / 等 claws 字符),
+精致 Draco 龙 ASCII art (~12 行, 用 /\\ / 等 claws 字符 + 鳞片细节),
 下方接信息行 (版本/平台/python/session/uptime)。带 ANSI 青色。
 信息行字段缺失 (空串) 则该行不显示。
 """
@@ -14,10 +14,25 @@ if TYPE_CHECKING:
 
 # ANSI 颜色
 CYAN = "\033[36m"
+DIM_CYAN = "\033[38;5;38m"
 RESET = "\033[0m"
 
-# 固定的 Draco 龙 ASCII art (10 行)
-_DRAGON = r"""         /\                 /\
+# 精致 Draco 龙 ASCII art (12 行, 加鳞片与爪细节)
+_DRAGON = r"""
+           /\                 /\
+          /  \               /  \
+         /    \  /\___/\___/    \
+        /  /\  \/ _   / _  \  /\  \
+       /  /  \ /  __//  __/ /  \ \  \
+      /  /    \  ___/\___/  /   \ \  \
+     /__/ \    \/  \/  \/  /    /  \ \__\
+       \   \   /\  /\  /\  \   /   /
+        \   \/_/  \/  \/  \/_/   /
+         \__/                \__/
+"""
+
+# 备选: 简化版龙头 (兜底使用)
+_DRAGON_SIMPLE = r"""         /\                 /\
         /  \               /  \
        /    \/\___/\___/\_//   \
       /  /\  / _   / _  \  /\   \
@@ -51,6 +66,9 @@ def _info_lines(ctx: StartupContext) -> list[str]:
 
 def render(ctx: StartupContext) -> str:
     """渲染 ascii_art 模板: 龙 ASCII art + 信息行"""
-    art = _DRAGON.strip("\n")
+    try:
+        art = _DRAGON.strip("\n")
+    except Exception:
+        art = _DRAGON_SIMPLE.strip("\n")
     body = "\n".join(_info_lines(ctx))
-    return f"{CYAN}{art}{RESET}\n{body}"
+    return f"{CYAN}{art}{RESET}\n{DIM_CYAN}{'─' * 36}{RESET}\n{body}"

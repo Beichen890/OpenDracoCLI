@@ -1,0 +1,30 @@
+# OpenDracoCLI Monokai 主题 (经典 Monokai 配色, 暗背景高对比)
+# 灵感来源: https://monokai.pro/
+name = "monokai"
+
+[tokens]
+bg = "#272822"
+fg = "#f8f8f2"
+accent = "#66d9ef"
+error = "#f92672"
+warn = "#e6db74"
+info = "#a6e22e"
+muted = "#75715e"
+
+[terminal_16]
+black = "#272822"
+red = "#f92672"
+green = "#a6e22e"
+yellow = "#f4bf75"
+blue = "#66d9ef"
+magenta = "#ae81ff"
+cyan = "#a1efe4"
+white = "#f8f8f2"
+bright_black = "#75715e"
+bright_red = "#f92672"
+bright_green = "#a6e22e"
+bright_yellow = "#e6db74"
+bright_blue = "#66d9ef"
+bright_magenta = "#ae81ff"
+bright_cyan = "#a1efe4"
+bright_white = "#f9f8f5"

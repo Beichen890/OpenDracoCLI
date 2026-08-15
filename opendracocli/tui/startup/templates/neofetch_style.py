@@ -1,8 +1,8 @@
 """内置模板: neofetch_style
 
-仿 neofetch 风格: 左侧小龙 ASCII art (~8 行), 右侧 key: value 列出
+仿 neofetch 风格: 左侧精致小龙 ASCII art (~10 行), 右侧 key: value 列出
 version/platform/python/session/cwd/uptime。用 ANSI 颜色区分 key(青) 和 value(白)。
-last_session_summary 非空时在下方显示 "上次会话: ..."。
+last_session_summary 非空时在下方显示 "↻ 上次会话: ..."。
 信息行字段缺失 (空串) 则该项不显示; session_id 取前 8 位。
 """
 
@@ -15,20 +15,23 @@ if TYPE_CHECKING:
 
 # ANSI 颜色
 CYAN = "\033[36m"
+DIM_CYAN = "\033[38;5;38m"
 WHITE = "\033[37m"
 BOLD = "\033[1m"
+GREEN = "\033[32m"
 RESET = "\033[0m"
 
-# 左侧小龙 ASCII art (9 行)
+# 左侧精致小龙 ASCII art (10 行, 比原版细节更丰富)
 _DRAGON = r"""       /\       /\
       /  \     /  \
      /    \___/    \
     /  /\  / _ \   \
    /  /  \/  __/   /
-  /__/ \__\___/\__/
-    \   \ \/ /  /
-     \   \/--/  /
-      \__/    \__/
+  /  /    \___/\__/
+ /__/     \/  \/  \__\
+   \   \  /\  /\  /
+    \   \/  \/  \/
+     \__/        \__/
 """
 
 
@@ -45,7 +48,7 @@ def render(ctx: StartupContext) -> str:
     # 右侧信息列表
     info_lines: list[str] = []
     info_lines.append(f"{CYAN}{BOLD}OpenDracoCLI{RESET}")
-    info_lines.append(f"{CYAN}{'─' * 16}{RESET}")
+    info_lines.append(f"{DIM_CYAN}{'─' * 16}{RESET}")
     if ctx.version:
         info_lines.append(_kv("version:  ", ctx.version))
     if ctx.platform:
@@ -70,7 +73,8 @@ def render(ctx: StartupContext) -> str:
 
     # 上次会话摘要 (非空时追加)
     if ctx.last_session_summary:
+        summary = ctx.last_session_summary[:60] + ("…" if len(ctx.last_session_summary) > 60 else "")
         merged.append("")
-        merged.append(f"{CYAN}上次会话:{RESET} {WHITE}{ctx.last_session_summary}{RESET}")
+        merged.append(f"{GREEN}↻ 上次会话:{RESET} {WHITE}{summary}{RESET}")
 
     return "\n".join(merged)

@@ -60,7 +60,7 @@ def _get_prompt_text(cwd: Optional[str] = None) -> str:
     home = os.path.expanduser("~")
     if cwd.startswith(home):
         cwd = "~" + cwd[len(home):]
-    return f"draco {cwd}> "
+    return f"draco {cwd} ❯ "
 
 
 class OpenDracoCLI:
@@ -312,21 +312,30 @@ class OpenDracoCLI:
 
             console = Console()
             ai_status = (
-                f"[green]on[/] ({self._config.ai_model})"
+                f"[green]✓ on[/] ({self._config.ai_model})"
                 if self._ai_enabled
-                else "[dim]off[/]"
+                else "[dim]✗ off[/]"
             )
             agent_status = (
-                f"[green]on[/] ({len(self._func_registry.list()) if self._func_registry else 0} funcs)"
+                f"[green]✓ on[/] ({len(self._func_registry.list()) if self._func_registry else 0} funcs)"
                 if self._agent_enabled
-                else "[dim]off[/]"
+                else "[dim]✗ off[/]"
             )
             console.print(
                 Panel.fit(
-                    "[bold cyan]OpenDracoCLI[/] — AI 时代的智能终端 (P4)\n"
-                    f"平台: {self._config.current_platform}  会话: {self._session_id[:8]}  AI: {ai_status}  Agent: {agent_status}\n"
-                    "输入 [green]/help[/] 查看内置命令，[green]/ai[/] AI 状态，[green]/agent[/] Agent 状态，[green]/quit[/] 退出",
+                    "[bold cyan]◈ OpenDracoCLI[/] [dim]— AI 时代的智能终端[/]\n"
+                    f"  [dim]平台[/] {self._config.current_platform}  "
+                    f"[dim]会话[/] {self._session_id[:8]}  "
+                    f"[dim]AI[/] {ai_status}  "
+                    f"[dim]Agent[/] {agent_status}\n"
+                    "  [dim]输入[/] [green]/help[/] [dim]查看命令 ·[/] "
+                    "[green]/ai[/] [dim]AI ·[/] "
+                    "[green]/agent[/] [dim]Agent ·[/] "
+                    "[green]/quit[/] [dim]退出[/]",
                     border_style="cyan",
+                    title="[bold cyan]Draco[/]",
+                    title_align="left",
+                    padding=(1, 2),
                 )
             )
             self._rich = True
@@ -622,34 +631,75 @@ class OpenDracoCLI:
         return None
 
     def _print_help(self) -> None:
-        print("内置命令:")
-        print("  /alias <name> <expansion>   添加/更新别名")
-        print("  /alias <name>               查看别名")
-        print("  /alias -d <name>            删除别名")
-        print("  /aliases                    列出所有别名")
-        print("  /history [N]                显示最近 N 条历史（默认 20）")
-        print("  /risk                       显示当前风险规则表")
-        print("  /risk test <command>        模拟评估命令风险（不执行）")
-        print("  /ai                         显示 AI 状态")
-        print("  /ai on                      启用 AI 智能层")
-        print("  /ai off                     禁用 AI 智能层")
-        print("  /ai ask <question>          向 AI 提问")
-        print("  /ai correct <command>       手动让 AI 纠错某命令（不执行）")
-        print("  /ai role [cmd]              查看/列出命令角色卡")
-        print("  /ai context                 查看感知上下文")
-        print("  /ai emotion                 查看当前情感状态")
-        print("  /agent                      显示 Agent 状态")
-        print("  /agent on                   启用 Agent 通道")
-        print("  /agent off                  禁用 Agent 通道")
-        print("  /agent list                 列出已注册函数")
-        print("  /agent show <name>          查看函数源码")
-        print("  /agent reload               重新加载 functions.py")
-        print("  /agent gen <intent>         AI 生成函数（代码即行动）")
-        print("  /agent run <name> [args]    显式调用函数")
-        print("  /agent templates            列出可用模板")
-        print("  /agent apply <template>     应用模板到 functions.py")
-        print("  /help                       显示此帮助")
-        print("  /quit                       退出")
+        if getattr(self, "_rich", False):
+            from rich.console import Console
+            from rich.table import Table
+
+            console = Console()
+            table = Table(title="◈ 内置命令", border_style="cyan", title_style="bold cyan")
+            table.add_column("命令", style="bold green", no_wrap=True)
+            table.add_column("说明", style="white")
+            rows = [
+                ("/alias <name> <expansion>", "添加/更新别名"),
+                ("/alias <name>", "查看别名"),
+                ("/alias -d <name>", "删除别名"),
+                ("/aliases", "列出所有别名"),
+                ("/history [N]", "显示最近 N 条历史（默认 20）"),
+                ("/risk", "显示当前风险规则表"),
+                ("/risk test <command>", "模拟评估命令风险（不执行）"),
+                ("/ai", "显示 AI 状态"),
+                ("/ai on", "启用 AI 智能层"),
+                ("/ai off", "禁用 AI 智能层"),
+                ("/ai ask <question>", "向 AI 提问"),
+                ("/ai correct <command>", "手动让 AI 纠错某命令（不执行）"),
+                ("/ai role [cmd]", "查看/列出命令角色卡"),
+                ("/ai context", "查看感知上下文"),
+                ("/ai emotion", "查看当前情感状态"),
+                ("/agent", "显示 Agent 状态"),
+                ("/agent on", "启用 Agent 通道"),
+                ("/agent off", "禁用 Agent 通道"),
+                ("/agent list", "列出已注册函数"),
+                ("/agent show <name>", "查看函数源码"),
+                ("/agent reload", "重新加载 functions.py"),
+                ("/agent gen <intent>", "AI 生成函数（代码即行动）"),
+                ("/agent run <name> [args]", "显式调用函数"),
+                ("/agent templates", "列出可用模板"),
+                ("/agent apply <template>", "应用模板到 functions.py"),
+                ("/help", "显示此帮助"),
+                ("/quit", "退出"),
+            ]
+            for cmd, desc in rows:
+                table.add_row(cmd, desc)
+            console.print(table)
+        else:
+            print("内置命令:")
+            print("  /alias <name> <expansion>   添加/更新别名")
+            print("  /alias <name>               查看别名")
+            print("  /alias -d <name>            删除别名")
+            print("  /aliases                    列出所有别名")
+            print("  /history [N]                显示最近 N 条历史（默认 20）")
+            print("  /risk                       显示当前风险规则表")
+            print("  /risk test <command>        模拟评估命令风险（不执行）")
+            print("  /ai                         显示 AI 状态")
+            print("  /ai on                      启用 AI 智能层")
+            print("  /ai off                     禁用 AI 智能层")
+            print("  /ai ask <question>          向 AI 提问")
+            print("  /ai correct <command>       手动让 AI 纠错某命令（不执行）")
+            print("  /ai role [cmd]              查看/列出命令角色卡")
+            print("  /ai context                 查看感知上下文")
+            print("  /ai emotion                 查看当前情感状态")
+            print("  /agent                      显示 Agent 状态")
+            print("  /agent on                   启用 Agent 通道")
+            print("  /agent off                  禁用 Agent 通道")
+            print("  /agent list                 列出已注册函数")
+            print("  /agent show <name>          查看函数源码")
+            print("  /agent reload               重新加载 functions.py")
+            print("  /agent gen <intent>         AI 生成函数（代码即行动）")
+            print("  /agent run <name> [args]    显式调用函数")
+            print("  /agent templates            列出可用模板")
+            print("  /agent apply <template>     应用模板到 functions.py")
+            print("  /help                       显示此帮助")
+            print("  /quit                       退出")
 
     async def _handle_ai_cmd(self, arg: str) -> None:
         """处理 /ai 子命令"""
@@ -1472,10 +1522,23 @@ class OpenDracoCLI:
         if not recs:
             print("（无历史记录）")
             return
-        print(f"最近 {len(recs)} 条历史:")
-        for r in reversed(recs):  # 时间正序显示
-            status = "OK" if r.exit_code == 0 else (f"×{r.exit_code}" if r.exit_code is not None else "?")
-            print(f"  [{status}] {r.raw_input}")
+        if getattr(self, "_rich", False):
+            from rich.console import Console
+            console = Console()
+            console.print(f"[bold cyan]◈ 最近 {len(recs)} 条历史[/]")
+            for r in reversed(recs):  # 时间正序显示
+                if r.exit_code == 0:
+                    mark = "[green]✓[/]"
+                elif r.exit_code is None:
+                    mark = "[dim]?[/]"
+                else:
+                    mark = f"[red]×{r.exit_code}[/]"
+                console.print(f"  {mark} {r.raw_input}")
+        else:
+            print(f"最近 {len(recs)} 条历史:")
+            for r in reversed(recs):  # 时间正序显示
+                status = "OK" if r.exit_code == 0 else (f"×{r.exit_code}" if r.exit_code is not None else "?")
+                print(f"  [{status}] {r.raw_input}")
 
     def _handle_risk_cmd(self, arg: str) -> None:
         """处理 /risk 子命令
@@ -1593,9 +1656,9 @@ class OpenDracoCLI:
     def _render_error(self, msg: str) -> None:
         if getattr(self, "_rich", False):
             from rich.console import Console
-            Console().print(f"[bold red]错误:[/] {msg}")
+            Console().print(f"[bold red]✗ 错误:[/] {msg}")
         else:
-            print(f"错误: {msg}", file=sys.stderr)
+            print(f"✗ 错误: {msg}", file=sys.stderr)
 
     def _render_draco_error(self, err: DracoError) -> None:
         if getattr(self, "_rich", False):
@@ -1604,21 +1667,21 @@ class OpenDracoCLI:
 
             Console().print(
                 Panel(
-                    f"[bold red]{err.code}[/]\n{err.message}",
-                    title="命令失败",
+                    f"[bold red]✗ {err.code}[/]\n{err.message}",
+                    title="[red]命令失败[/]",
                     border_style="red",
                 )
             )
         else:
-            print(f"[{err.code}] {err.message}", file=sys.stderr)
+            print(f"✗ [{err.code}] {err.message}", file=sys.stderr)
 
     def _render_block(self, result) -> None:
         msg = result.block_reason or "被钩子阻断"
         if getattr(self, "_rich", False):
             from rich.console import Console
-            Console().print(f"[bold yellow]已阻断:[/] {msg}")
+            Console().print(f"[bold yellow]⚠ 已阻断:[/] {msg}")
         else:
-            print(f"已阻断: {msg}", file=sys.stderr)
+            print(f"⚠ 已阻断: {msg}", file=sys.stderr)
 
 
 def main() -> None:

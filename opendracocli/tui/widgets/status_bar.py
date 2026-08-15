@@ -1,4 +1,15 @@
-"""状态栏 Widget — 底部一行显示平台/cwd/会话/退出码/主题/AI/Agent"""
+"""状态栏 Widget — 底部一行显示平台/cwd/会话/退出码/主题/AI/Agent
+
+视觉规范:
+- 平台: 加粗 accent
+- 分隔符: dim │ (单竖线)
+- cwd: 普通前景色
+- session: dim
+- theme: dim italic
+- AI: 绿色 on / 灰色 off
+- Agent: magenta on / 灰色 off
+- 退出码: 零绿色 ✓ / 非零红色 ×N
+"""
 
 from __future__ import annotations
 
@@ -14,6 +25,7 @@ class StatusBar(Static):
         height: 1;
         background: $boost;
         color: $text-muted;
+        border: tall $accent;
         padding: 0 1;
     }
     """
@@ -71,18 +83,37 @@ class StatusBar(Static):
         return cwd
 
     def _refresh(self) -> None:
-        parts = [f"[bold]{self._platform or '?'}[/]"]
+        # 各段用 │ 分隔, dim 着色分隔符
+        SEP = " [dim]│[/] "
+        parts: list[str] = []
+
+        # 平台: 加粗 accent
+        if self._platform:
+            parts.append(f"[bold accent]{self._platform}[/]")
+        # cwd: 普通色 + 文件夹图标
         if self._cwd:
-            parts.append(self._cwd)
+            parts.append(f"[accent]◈[/] {self._cwd}")
+        # session: dim
         if self._session:
-            parts.append(f"sess={self._session}")
+            parts.append(f"[dim]sess={self._session}[/]")
+        # theme: dim italic
         if self._theme:
-            parts.append(f"theme={self._theme}")
+            parts.append(f"[dim italic]theme={self._theme}[/]")
+        # AI: 绿色 on / 灰色 off
         if self._ai:
-            parts.append("[green]AI[/]")
+            parts.append("[green]✓ AI[/]")
+        else:
+            parts.append("[dim]AI[/]")
+        # Agent: magenta on / 灰色 off
         if self._agent:
-            parts.append(f"[magenta]Agent({self._func_count})[/]")
+            parts.append(f"[magenta]✓ Agent({self._func_count})[/]")
+        else:
+            parts.append("[dim]Agent[/]")
+        # 退出码: 零绿色 ✓ / 非零红色 ×N
         if self._exit_code is not None:
-            color = "green" if self._exit_code == 0 else "red"
-            parts.append(f"[{color}]×{self._exit_code}[/]")
-        self.update(" | ".join(parts))
+            if self._exit_code == 0:
+                parts.append("[green]✓ 0[/]")
+            else:
+                parts.append(f"[red]×{self._exit_code}[/]")
+
+        self.update(SEP.join(parts))

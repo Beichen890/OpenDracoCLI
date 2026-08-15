@@ -105,6 +105,7 @@ def generate_css(
 
     生成的 CSS 包含:
     - $background / $color / $accent / $error / $warning / $success / $info / $muted
+      以及 $text-muted (覆盖 textual 默认色板, 让 base.tcss 中 $text-muted 生效)
       等 textual design tokens (覆盖 textual 默认色板)
     - 一个 Screen 级别的基础样式
     - 常用 widget 类样式 (.input-panel/.output-panel/.history-sidebar/.status-bar
@@ -130,14 +131,16 @@ def generate_css(
     lines.append("/* 颜色 token 来自主题 TOML，请勿手工编辑此文件 */")
     lines.append("")
     # === textual design tokens (覆盖默认色板) ===
-    lines.append(f"$background: {bg};")
-    lines.append(f"$color: {fg};")
-    lines.append(f"$accent: {accent};")
-    lines.append(f"$error: {error};")
-    lines.append(f"$warning: {warn};")
-    lines.append(f"$success: {info};")
-    lines.append(f"$info: {info};")
-    lines.append(f"$muted: {muted};")
+    lines.append("$background: {bg};".format(bg=bg))
+    lines.append("$color: {fg};".format(fg=fg))
+    lines.append("$accent: {accent};".format(accent=accent))
+    lines.append("$error: {error};".format(error=error))
+    lines.append("$warning: {warn};".format(warn=warn))
+    lines.append("$success: {info};".format(info=info))
+    lines.append("$info: {info};".format(info=info))
+    lines.append("$muted: {muted};".format(muted=muted))
+    # 覆盖 textual 内置 $text-muted token, 让 base.tcss 中 $text-muted 引用本主题色
+    lines.append("$text-muted: {muted};".format(muted=muted))
     # 终端 16 色作为额外 design token ($term-<color>)
     if term:
         lines.append("")
@@ -169,12 +172,43 @@ def generate_css(
     lines.append("")
     # === 语义色辅助类 ===
     lines.append("/* 语义色辅助类 */")
-    lines.append(".accent-text { color: $accent; }")
-    lines.append(".error-text { color: $error; }")
+    lines.append(".accent-text { color: $accent; text-style: bold; }")
+    lines.append(".error-text { color: $error; text-style: bold; }")
     lines.append(".warn-text { color: $warning; }")
     lines.append(".info-text { color: $info; }")
     lines.append(".success-text { color: $success; }")
-    lines.append(".muted-text { color: $muted; }")
+    lines.append(".muted-text { color: $muted; text-style: italic; }")
+    lines.append("")
+    # === 通用 Widget 视觉细节 ===
+    lines.append("/* Header / Footer 着色 */")
+    lines.append("Header { color: $accent; background: $boost; text-style: bold; }")
+    lines.append("Footer { color: $muted; background: $boost; }")
+    lines.append("")
+    # 输入面板焦点态: 加粗 + 双线边框 + accent 高亮
+    lines.append("/* 输入面板: 焦点态高亮 */")
+    lines.append(".input-panel:focus {")
+    lines.append("    border: double $accent;")
+    lines.append("    text-style: bold;")
+    lines.append("}")
+    lines.append("")
+    # 边框标题颜色
+    lines.append("/* 面板标题着色 */")
+    lines.append(".input-panel, .output-panel, .history-sidebar {")
+    lines.append("    border-title-color: $accent;")
+    lines.append("    border-title-background: $boost;")
+    lines.append("    border-subtitle-color: $muted;")
+    lines.append("}")
+    lines.append("")
+    # 滚动条: accent 拇指 + boost 背景
+    lines.append("/* 滚动条: accent 拇指 */")
+    lines.append("* {")
+    lines.append("    scrollbar-color: $accent $boost;")
+    lines.append("    scrollbar-corner-color: $boost;")
+    lines.append("    scrollbar-size: 1 1;")
+    lines.append("}")
+    lines.append("")
+    # 暗色辅助文本
+    lines.append(".dim { color: $muted; text-style: italic; }")
     lines.append("")
     return "\n".join(lines)
 

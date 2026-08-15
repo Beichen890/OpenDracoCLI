@@ -3,39 +3,49 @@
  * 不依赖主题色: 仅用 textual 内置 design tokens ($boost 等)，
  * 以及由主题 CSS 覆盖的 $background / $color。
  * 主题 CSS (由 ThemeProvider.generate_css 生成) 会与本文件一起加载，
- * 覆盖颜色 token；本文件负责纯布局比例。
+ * 覆盖颜色 token；本文件负责纯布局比例 + 滚动条/边框 等视觉细节。
  *
  * 布局结构 (grid):
  *   ┌──────────────────────────────────────┐
- *   │  #input-panel          (高 3)        │  顶部输入
+ *   │  Header           (auto)             │  顶部标题栏
+ *   ├──────────────────────────────────────┤
+ *   │  #input-panel       (高 3)           │  输入区
  *   ├───────────────────────┬──────────────┤
  *   │  #output-panel        │ #history-     │  主区
  *   │  (3fr)                │ sidebar(1fr)  │  (左输出 + 右历史, 可隐藏)
  *   ├───────────────────────┴──────────────┤
- *   │  #status-bar           (高 1)        │  底部状态
+ *   │  #status-bar        (高 1)           │  底部状态
+ *   ├──────────────────────────────────────┤
+ *   │  Footer           (auto)             │  底部快捷键
  *   └──────────────────────────────────────┘
  */
 
 Screen {
-    layout: grid;
-    grid-size: 1 3;
-    grid-columns: 1fr;
-    grid-rows: 3 1fr 1;
+    layout: vertical;
     background: $background;
     color: $foreground;
 }
 
-/* 顶部输入面板: 固定高 3 */
-#input-panel {
-    column-span: 1;
-    row-span: 1;
-    height: 3;
-    border: tall $boost;
-    border-title-color: $text;
-    padding: 0 1;
+/* 顶部 Header: 紧凑 + 主色强调 */
+Header {
+    background: $boost;
+    color: $accent;
+    dock: top;
+    height: 1;
+    border: none;
+    text-style: bold;
 }
 
-/* 主内容区: 左输出 (3fr) + 右历史侧栏 (1fr) */
+/* 底部 Footer: 暗色快捷键提示 */
+Footer {
+    background: $boost;
+    color: $text-muted;
+    dock: bottom;
+    height: 1;
+    border: none;
+}
+
+/* 主内容区: 左输出 (3fr) + 右历史侧栏 (1fr), 占据剩余空间 */
 #main {
     layout: grid;
     grid-size: 2 1;
@@ -44,33 +54,74 @@ Screen {
     height: 1fr;
 }
 
+/* 顶部输入面板: 固定高 3 + 圆角边框 + 焦点态高亮 */
+#input-panel {
+    height: 3;
+    border: round $accent;
+    border-title-color: $accent;
+    border-title-background: $boost;
+    border-subtitle-color: $text-muted;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    background: $boost;
+}
+
+#input-panel:focus {
+    border: double $accent;
+    text-style: bold;
+}
+
 /* 左侧输出面板 */
 #output-panel {
     column-span: 1;
     row-span: 1;
-    border: tall $boost;
-    border-title-color: $text;
+    border: round $accent;
+    border-title-color: $accent;
+    border-title-background: $boost;
     padding: 0 1;
+    background: $boost;
+    scrollbar-size: 1 1;
+    scrollbar-color: $accent $boost;
+    scrollbar-corner-color: $boost;
 }
 
 /* 右侧历史侧栏: 可隐藏 (app 给 widget 加 .hidden 类即折叠) */
 #history-sidebar {
     column-span: 1;
     row-span: 1;
-    border: tall $boost;
-    border-title-color: $text;
+    border: round $accent;
+    border-title-color: $accent;
+    border-title-background: $boost;
     padding: 0 1;
+    background: $boost;
+    scrollbar-size: 1 1;
+    scrollbar-color: $text-muted $boost;
+    scrollbar-corner-color: $boost;
 }
 
 #history-sidebar.hidden {
     display: none;
 }
 
-/* 底部状态栏: 固定高 1 */
+/* 底部状态栏: 单行紧凑, accent 描边 */
 #status-bar {
-    column-span: 1;
-    row-span: 1;
     height: 1;
-    border: tall $boost;
+    border: tall $accent;
     padding: 0 1;
+    background: $boost;
+    color: $text-muted;
+}
+
+/* 全局滚动条样式: 细滚动条 + accent 色拇指 */
+* {
+    scrollbar-size: 1 1;
+    scrollbar-color: $accent $boost;
+    scrollbar-background: $boost;
+    scrollbar-corner-color: $boost;
+}
+
+/* 暗色辅助文本 (dim 文本) */
+.dim {
+    color: $text-muted;
+    text-style: italic;
 }

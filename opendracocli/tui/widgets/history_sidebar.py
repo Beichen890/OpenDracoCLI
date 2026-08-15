@@ -1,4 +1,11 @@
-"""历史侧栏 Widget — 显示最近 N 条命令，点击/回车回填输入区"""
+"""历史侧栏 Widget — 显示最近 N 条命令，点击/回车回填输入区
+
+视觉规范:
+- 成功 (exit_code==0): 绿色 ✓ 前缀
+- 失败 (exit_code!=0): 红色 ×N 前缀
+- 未知 (exit_code is None): dim ? 前缀
+- 命令文本: 普通前景色, 过长用 … 截断
+"""
 
 from __future__ import annotations
 
@@ -29,14 +36,21 @@ class HistorySidebar(OptionList):
     DEFAULT_CSS = """
     HistorySidebar {
         border: round $accent;
+        background: $boost;
         width: 32;
         min-width: 20;
         max-width: 48;
         height: 1fr;
         display: block;
+        scrollbar-size: 1 1;
+        scrollbar-color: $text-muted $boost;
     }
     HistorySidebar.-hidden {
         display: none;
+    }
+    HistorySidebar > .option-list--option-highlighted {
+        background: $accent 20%;
+        text-style: bold;
     }
     """
 
@@ -49,7 +63,7 @@ class HistorySidebar(OptionList):
 
     def __init__(self) -> None:
         super().__init__(name="history")
-        self.border_title = "历史"
+        self.border_title = "◈ 历史"
         self._entries: list[HistoryEntry] = []
 
     def load_entries(self, entries: list[HistoryEntry]) -> None:
@@ -78,10 +92,19 @@ class HistorySidebar(OptionList):
 
     @staticmethod
     def _format_option(e: HistoryEntry) -> Option:
-        mark = "OK" if e.exit_code == 0 else (f"×{e.exit_code}" if e.exit_code is not None else "?")
+        """格式化历史条目: 颜色编码退出码 + 截断过长输入"""
+        if e.exit_code == 0:
+            mark = "[green]✓[/]"
+        elif e.exit_code is None:
+            mark = "[dim]?[/]"
+        else:
+            mark = f"[red]×{e.exit_code}[/]"
         # 截断过长输入
         raw = e.raw_input[:60] + ("…" if len(e.raw_input) > 60 else "")
-        return Option(f"[{mark}] {raw}", id=str(e.id) if e.id is not None else None)
+        return Option(
+            f"{mark} {raw}",
+            id=str(e.id) if e.id is not None else None,
+        )
 
     def toggle_hidden(self) -> None:
         """切换显隐"""
