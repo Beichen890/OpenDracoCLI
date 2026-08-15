@@ -32,9 +32,13 @@ dependencies = [
 
 [project.optional-dependencies]
 figlet = ["pyfiglet>=1.0"]
+# 启动画面真彩色像素艺术 (扫描 draco_logo.jpg 渲染半块字符)
+# 未安装时自动降级到 ASCII 兜底, 不影响功能
+blockart = ["pillow>=9.2"]
 test = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
+    "pillow>=9.2",
 ]
 
 [project.scripts]
@@ -53,6 +57,7 @@ include = [
     { path = "opendracocli/ai/roles/*.json", format = "wheel" },
     { path = "opendracocli/tui/styles/**/*.tcss", format = "wheel" },
     { path = "opendracocli/tui/styles/**/*.toml", format = "wheel" },
+    { path = "opendracocli/tui/startup/assets/*.jpg", format = "wheel" },
 ]
 
 [tool.pytest.ini_options]
