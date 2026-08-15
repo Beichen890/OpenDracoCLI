@@ -116,13 +116,13 @@ class StartupLoader:
         self._load_builtins()
 
     def _load_builtins(self) -> None:
-        """注册 4 个内置模板: minimal/figlet/ascii_art/neofetch_style
+        """注册 5 个内置模板: draco/minimal/figlet/ascii_art/neofetch_style
 
         从 .templates 子包 import 对应 render 函数。
         每个 import 失败都要捕获, 至少 minimal 必须注册成功。
         """
         pkg = __package__ or "opendracocli.tui.startup"
-        for name in ("minimal", "figlet", "ascii_art", "neofetch_style"):
+        for name in ("minimal", "figlet", "ascii_art", "neofetch_style", "draco"):
             try:
                 mod = importlib.import_module(f".templates.{name}", package=pkg)
                 fn = getattr(mod, "render", None)

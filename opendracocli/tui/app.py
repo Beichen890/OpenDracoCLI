@@ -501,7 +501,7 @@ class DracoApp(App):
     async def _exec_shell(self, text: str) -> None:
         """shell 通道 (P1-P3 管线)"""
         out = self.query_one(OutputPanel)
-        out.write(f"[dim]$ {text}[/]")
+        out.write_command_echo(text, channel="shell")
         try:
             result = await self._pipeline.run(text, session_id=self._session_id)
         except Exception as e:
@@ -547,7 +547,7 @@ class DracoApp(App):
         out.write_suggestion(suggested_command=suggested)
         ok = await self._confirmer.ask_yes("应用建议命令？", default=False)
         if ok:
-            out.write(f"[dim]→ 执行: {suggested}[/]")
+            out.write_info(f"→ 执行: {suggested}")
             await self._exec_shell(suggested)
 
     def _maybe_render_suggestions(self) -> None:
@@ -563,7 +563,7 @@ class DracoApp(App):
     async def _exec_agent(self, raw_input: str, reg_func: RegisteredFunction, args_str: str) -> None:
         """Python 通道 (P4)"""
         out = self.query_one(OutputPanel)
-        out.write(f"[dim magenta]$ {raw_input}[/]")
+        out.write_command_echo(raw_input, channel="agent")
         if self._py_executor is None:
             out.write_error("draco.agent", "Agent 通道未初始化")
             return
@@ -591,9 +591,9 @@ class DracoApp(App):
             import json
             try:
                 s = json.dumps(result.return_value, ensure_ascii=False, default=str, indent=2)
-                out.write(f"[dim]→ {s}[/]")
+                out.write_info(f"→ {s}")
             except (TypeError, ValueError):
-                out.write(f"[dim]→ {result.return_value!r}[/]")
+                out.write_info(f"→ {result.return_value!r}")
         self._refresh_status(exit_code=result.exit_code)
         self.query_one(HistorySidebar).push_latest(
             HistoryEntry(raw_input, result.exit_code, None)
@@ -641,22 +641,25 @@ class DracoApp(App):
 
     def _help_text(self) -> str:
         return (
-            "[bold]内置命令:[/]\n"
-            "  /help                 显示帮助\n"
-            "  /quit                 退出\n"
-            "  /clear                清屏\n"
-            "  /alias <n> <exp>      添加/更新别名\n"
-            "  /aliases              列出别名\n"
-            "  /history [N]          显示最近 N 条历史\n"
-            "  /risk                 显示风险规则表\n"
-            "  /risk test <cmd>      模拟评估命令风险\n"
-            "  /theme                列出主题\n"
-            "  /theme <name>         切换主题\n"
-            "  /ai                   AI 状态\n"
-            "  /ai on|off            启用/禁用 AI\n"
-            "  /agent                Agent 状态\n"
-            "  /agent on|off|list|run <name> [args]  Agent 控制\n"
-            "  [dim]快捷键: Ctrl+T 主题 / Ctrl+H 历史栏 / Ctrl+L 清屏 / Ctrl+E AI / Ctrl+A Agent / Ctrl+D 退出[/]"
+            "[bold accent]◈ 内置命令[/]\n"
+            "[dim]────────────────────────────────────────────[/]\n"
+            "  [bold]/help[/]                 显示帮助\n"
+            "  [bold]/quit[/]                 退出\n"
+            "  [bold]/clear[/]                清屏\n"
+            "  [bold]/alias[/] <n> <exp>      添加/更新别名\n"
+            "  [bold]/aliases[/]              列出别名\n"
+            "  [bold]/history[/] [N]          显示最近 N 条历史\n"
+            "  [bold]/risk[/]                 显示风险规则表\n"
+            "  [bold]/risk[/] test <cmd>      模拟评估命令风险\n"
+            "  [bold]/theme[/]                列出主题\n"
+            "  [bold]/theme[/] <name>         切换主题\n"
+            "  [bold]/ai[/]                   AI 状态\n"
+            "  [bold]/ai[/] on|off            启用/禁用 AI\n"
+            "  [bold]/agent[/]                Agent 状态\n"
+            "  [bold]/agent[/] on|off|list|run <name> [args]  Agent 控制\n"
+            "[dim]────────────────────────────────────────────[/]\n"
+            "[dim italic]快捷键: [bold]Ctrl+T[/] 主题 / [bold]Ctrl+H[/] 历史栏 / [bold]Ctrl+L[/] 清屏 / "
+            "[bold]Ctrl+E[/] AI / [bold]Ctrl+A[/] Agent / [bold]Ctrl+D[/] 退出[/]"
         )
 
     def _handle_alias_cmd(self, arg: str) -> None:
@@ -1001,7 +1004,7 @@ class DracoApp(App):
             theme = self._theme_provider.switch(nxt)
             self.stylesheet.add_source(theme.css)
             self._refresh_status(theme=nxt)
-            out.write_success(f"主题: {nxt}")
+            out.write_success(f"已切换主题: {nxt}")
         except Exception as e:
             out.write_error("draco.ui.theme", str(e))
 

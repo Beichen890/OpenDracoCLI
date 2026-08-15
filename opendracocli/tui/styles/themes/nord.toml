@@ -1,0 +1,30 @@
+# OpenDracoCLI Nord 主题 (Nord 极地配色, 冷色调蓝绿)
+# 灵感来源: https://www.nordtheme.com/
+name = "nord"
+
+[tokens]
+bg = "#2e3440"
+fg = "#d8dee9"
+accent = "#88c0d0"
+error = "#bf616a"
+warn = "#ebcb8b"
+info = "#a3be8c"
+muted = "#4c566a"
+
+[terminal_16]
+black = "#3b4252"
+red = "#bf616a"
+green = "#a3be8c"
+yellow = "#ebcb8b"
+blue = "#81a1c1"
+magenta = "#b48ead"
+cyan = "#88c0d0"
+white = "#e5e9f0"
+bright_black = "#4c566a"
+bright_red = "#bf616a"
+bright_green = "#a3be8c"
+bright_yellow = "#ebcb8b"
+bright_blue = "#81a1c1"
+bright_magenta = "#b48ead"
+bright_cyan = "#8fbcbb"
+bright_white = "#eceff4"
